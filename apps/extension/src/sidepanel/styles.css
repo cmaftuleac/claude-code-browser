@@ -32,6 +32,33 @@ body {
   overflow: hidden;
 }
 
+/* ── Top Bar ─────────────────────────────────────────────────────────────── */
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.app-topbar__new-chat {
+  padding: 4px 10px;
+  margin-right: 8px;
+  background: #6366f120;
+  border: 1px solid #6366f150;
+  border-radius: 6px;
+  color: #a5b4fc;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.app-topbar__new-chat:hover {
+  background: #6366f130;
+}
+
 /* ── Connection Status ───────────────────────────────────────────────────── */
 
 .connection-status {
@@ -39,8 +66,6 @@ body {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: #16162a;
-  border-bottom: 1px solid #2a2a4a;
   flex-shrink: 0;
 }
 

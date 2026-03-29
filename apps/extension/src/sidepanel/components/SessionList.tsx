@@ -11,15 +11,9 @@ export function SessionList({ send }: Props) {
   const sessions = useChatStore((s) => s.sessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const setActiveSession = useChatStore((s) => s.setActiveSession);
-  const clearMessages = useChatStore((s) => s.clearMessages);
-
   const handleResume = (id: string) => {
     setActiveSession(id);
     send({ type: 'session:resume', sessionId: id });
-  };
-
-  const handleNewChat = () => {
-    clearMessages();
   };
 
   return (
@@ -31,9 +25,6 @@ export function SessionList({ send }: Props) {
 
       {!collapsed && (
         <div className="session-list__items">
-          <button className="session-list__new-chat" onClick={handleNewChat}>
-            + New Chat
-          </button>
           {sessions.map((session) => (
             <button
               key={session.id}
