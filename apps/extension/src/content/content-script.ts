@@ -1,10 +1,7 @@
-// Prevent double-injection
-if (!(window as unknown as { __ccb_injected?: boolean }).__ccb_injected) {
+// Prevent double-injection — use IIFE so we can early-return
+(function() {
+if ((window as unknown as { __ccb_injected?: boolean }).__ccb_injected) return;
 (window as unknown as { __ccb_injected: boolean }).__ccb_injected = true;
-_ccb_init();
-}
-
-function _ccb_init() {
 
 let pickerActive = false;
 let overlay: HTMLDivElement | null = null;
@@ -416,4 +413,4 @@ function buildXPath(el: Element): string {
   return parts.join('');
 }
 
-} // end _ccb_init
+})(); // end double-injection guard
