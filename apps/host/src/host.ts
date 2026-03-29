@@ -24,8 +24,9 @@ function send(msg: ServerMessage): void {
 // Signal ready immediately — before any heavy imports
 send({ type: 'connection:ready', serverVersion: '0.1.0' });
 
-// Check for pending source configs from /browse skill
+// Check for pending source configs from /browse skill — on startup and every 2 seconds
 checkPendingSources();
+setInterval(checkPendingSources, 2000);
 
 log('Host started, waiting for messages');
 
