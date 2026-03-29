@@ -27,6 +27,5 @@ else
   start chrome "$ARGUMENTS"
 fi
 ```
-- Tell the user: "Page opened in Chrome. Click the Claude Code Browser extension icon (puzzle piece → Claude Code Browser) to open the side panel, then select elements and chat about them."
-
-The workspace is at: !`pwd`
+- Tell the user: "Page opened in Chrome. Click the Claude Code Browser extension icon to open the side panel."
+- Also tell the user to add this workspace as a source in the extension's "Sources" panel so Claude Code can access the project files: !`pwd`

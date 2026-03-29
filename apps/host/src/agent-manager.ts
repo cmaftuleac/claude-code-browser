@@ -36,6 +36,7 @@ export interface SendMessageParams {
   images?: string[];
   url: string;
   projectDir?: string;
+  sources?: string[];
 }
 
 export interface StreamCallbacks {
@@ -110,6 +111,7 @@ export class AgentManager {
           systemPrompt: SYSTEM_PROMPT,
           includePartialMessages: true,
           cwd,
+          additionalDirectories: params.sources,
           abortController,
           ...(params.sessionId && { resume: params.sessionId }),
         },

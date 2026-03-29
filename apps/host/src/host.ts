@@ -194,6 +194,7 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
           images: msg.images,
           url: msg.url,
           projectDir: msg.projectDir,
+          sources: msg.sources,
         },
         {
           onSessionId: (sessionId) => {

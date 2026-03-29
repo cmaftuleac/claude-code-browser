@@ -25,9 +25,10 @@ export type ClientMessage =
       sessionId?: string;
       message: string;
       anchors?: ElementAnchor[];
-      images?: string[];  // base64 data URLs
+      images?: string[];
       url: string;
       projectDir?: string;
+      sources?: string[];  // additional project directories
     }
   | { type: 'session:list' }
   | { type: 'session:resume'; sessionId: string }
