@@ -2,6 +2,16 @@
 
 A Chrome extension that lets you **point at page elements** and have Claude Code fix them — no screenshots, no copy-pasting selectors.
 
+## Screenshots
+
+| Chat with element chips | Sessions | Sources |
+|---|---|---|
+| ![Chat](screenshots/screenshot-1.jpg) | ![Sessions](screenshots/screenshot-2.jpg) | ![Sources](screenshots/screenshot-3.jpg) |
+
+| DOM Tree | Slash Commands |
+|---|---|
+| ![DOM Tree](screenshots/screenshot-4.jpg) | ![Commands](screenshots/screenshot-5.jpg) |
+
 ## How it works
 
 1. In VS Code, type `/browse localhost:3000` (or any URL)
