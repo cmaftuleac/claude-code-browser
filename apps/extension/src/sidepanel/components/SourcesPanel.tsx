@@ -59,7 +59,7 @@ export function SourcesPanel() {
     loadSources();
     const onActivated = () => loadSources();
     chrome.tabs.onActivated.addListener(onActivated);
-    const pollTimer = setInterval(loadSources, 3000);
+    const pollTimer = setInterval(loadSources, 1000);
     return () => {
       chrome.tabs.onActivated.removeListener(onActivated);
       clearInterval(pollTimer);
