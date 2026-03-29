@@ -32,13 +32,18 @@ export function ChatInput({ send }: Props) {
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const isAgentRunning = useChatStore((s) => s.isAgentRunning);
   const setAgentRunning = useChatStore((s) => s.setAgentRunning);
+  const enqueueMessage = useChatStore((s) => s.enqueueMessage);
+  const messageQueue = useChatStore((s) => s.messageQueue);
+
+  // Dynamic placeholder
+  const placeholder = isAgentRunning
+    ? (messageQueue.length > 0 ? 'Queue another message...' : 'Queue a message...')
+    : 'Ask about this page...';
 
   // Load slash commands from host
   useEffect(() => {
     send({ type: 'commands:list' } as ClientMessage);
-    const handler = (e: Event) => {
-      setSlashCommands((e as CustomEvent).detail);
-    };
+    const handler = (e: Event) => setSlashCommands((e as CustomEvent).detail);
     window.addEventListener('ccb:commands', handler);
     return () => window.removeEventListener('ccb:commands', handler);
   }, [send]);
@@ -47,8 +52,7 @@ export function ChatInput({ send }: Props) {
   const lastAnchorCountRef = useRef(0);
   useEffect(() => {
     if (pendingAnchors.length > lastAnchorCountRef.current) {
-      const anchor = pendingAnchors[pendingAnchors.length - 1];
-      insertChipAtCursor(anchor);
+      insertChipAtCursor(pendingAnchors[pendingAnchors.length - 1]);
     }
     lastAnchorCountRef.current = pendingAnchors.length;
   }, [pendingAnchors]);
@@ -117,44 +121,52 @@ export function ChatInput({ send }: Props) {
 
     const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
     const imgs = images.length > 0 ? [...images] : undefined;
-    addUserMessage(message, anchors, imgs);
 
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const url = tabs[0]?.url ?? '';
-      send({
-        type: 'chat:send',
-        sessionId: activeSessionId ?? undefined,
-        message,
+    if (isAgentRunning) {
+      // Queue the message instead of sending
+      enqueueMessage({
+        id: `q-${Date.now()}`,
+        content: message,
         anchors,
         images: imgs,
-        url,
       });
-    });
+    } else {
+      // Send immediately
+      addUserMessage(message, anchors, imgs);
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        send({
+          type: 'chat:send',
+          sessionId: activeSessionId ?? undefined,
+          message,
+          anchors,
+          images: imgs,
+          url: tabs[0]?.url ?? '',
+        });
+      });
+      setAgentRunning(true);
+    }
 
-    setAgentRunning(true);
     clearAnchors();
     setImages([]);
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
+  }, [pendingAnchors, images, isAgentRunning, enqueueMessage, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
 
   const handleStop = useCallback(() => {
     if (activeSessionId) {
       send({ type: 'agent:interrupt', sessionId: activeSessionId });
     }
-    setAgentRunning(false);
-  }, [activeSessionId, send, setAgentRunning]);
+  }, [activeSessionId, send]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (showSlashMenu) return; // Let SlashCommandMenu handle keys
+    if (showSlashMenu) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  // Detect `/` typing for slash command autocomplete
   const handleInput = () => {
     const text = editorRef.current?.textContent ?? '';
     if (text.startsWith('/')) {
@@ -168,7 +180,6 @@ export function ChatInput({ send }: Props) {
   const handleSlashSelect = (command: string) => {
     if (editorRef.current) {
       editorRef.current.textContent = command;
-      // Move cursor to end
       const sel = window.getSelection();
       if (sel) {
         const r = document.createRange();
@@ -218,7 +229,6 @@ export function ChatInput({ send }: Props) {
 
   return (
     <div className="chat-input" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
-      {/* Slash command menu (above input) */}
       {showSlashMenu && (
         <SlashCommandMenu
           commands={slashCommands}
@@ -228,7 +238,6 @@ export function ChatInput({ send }: Props) {
         />
       )}
 
-      {/* Image previews */}
       {images.length > 0 && (
         <div className="chat-input__images">
           {images.map((src, i) => (
@@ -240,75 +249,44 @@ export function ChatInput({ send }: Props) {
         </div>
       )}
 
-      {/* Editor */}
       <div
         ref={editorRef}
         className="chat-input__editor"
-        contentEditable={!isAgentRunning}
+        contentEditable
         onKeyDown={handleKeyDown}
         onInput={handleInput}
         onPaste={handlePaste}
-        data-placeholder="Ask about this page..."
+        data-placeholder={placeholder}
         role="textbox"
         suppressContentEditableWarning
       />
 
-      {/* Bottom toolbar */}
       <div className="chat-input__toolbar">
         <div className="chat-input__toolbar-left">
-          <button
-            className="chat-input__tool-btn chat-input__tool-btn--picker"
-            onClick={activatePicker}
-            disabled={isAgentRunning}
-            title="Pick element"
-          >
+          <button className="chat-input__tool-btn chat-input__tool-btn--picker" onClick={activatePicker} title="Pick element">
             {'\u2316'}
           </button>
-          <button
-            className="chat-input__tool-btn"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isAgentRunning}
-            title="Attach file"
-          >
+          <button className="chat-input__tool-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
             @
           </button>
-          <button
-            className="chat-input__tool-btn chat-input__tool-btn--slash"
-            onClick={() => { setShowSlashMenu(!showSlashMenu); setSlashFilter('/'); }}
-            disabled={isAgentRunning}
-            title="Slash commands"
-          >
+          <button className="chat-input__tool-btn chat-input__tool-btn--slash" onClick={() => { setShowSlashMenu(!showSlashMenu); setSlashFilter('/'); }} title="Slash commands">
             /
           </button>
         </div>
 
         <div className="chat-input__toolbar-right">
-          {isAgentRunning ? (
+          {isAgentRunning && (
             <button className="chat-input__stop-btn" onClick={handleStop} title="Stop">
               {'\u25A0'}
             </button>
-          ) : (
-            <button
-              className="chat-input__send-btn"
-              onClick={handleSend}
-              disabled={!getEditorText() && pendingAnchors.length === 0 && images.length === 0}
-              title="Send"
-            >
-              {'\u2191'}
-            </button>
           )}
+          <button className="chat-input__send-btn" onClick={handleSend} title={isAgentRunning ? 'Queue message' : 'Send'}>
+            {'\u2191'}
+          </button>
         </div>
       </div>
 
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        style={{ display: 'none' }}
-        onChange={handleFileUpload}
-      />
+      <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileUpload} />
     </div>
   );
 }

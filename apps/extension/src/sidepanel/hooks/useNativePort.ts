@@ -4,6 +4,27 @@ import { useConnectionStore } from '../stores/connection-store';
 import { useChatStore } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
 
+function sendNextFromQueue(send: (msg: ClientMessage) => void) {
+  const store = useChatStore.getState();
+  const next = store.dequeueMessage();
+  if (!next) return;
+
+  store.addUserMessage(next.content, next.anchors, next.images);
+  store.setAgentRunning(true);
+
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const sessionId = useChatStore.getState().activeSessionId;
+    send({
+      type: 'chat:send',
+      sessionId: sessionId ?? undefined,
+      message: next.content,
+      anchors: next.anchors,
+      images: next.images,
+      url: tabs[0]?.url ?? '',
+    });
+  });
+}
+
 /**
  * Connects to the native host via the service worker.
  * Side panel ↔ service worker (chrome.runtime.connect) ↔ native host (connectNative).
@@ -91,6 +112,8 @@ export function useNativePort() {
         case 'chat:complete':
           useChatStore.getState().completeMessage(msg.messageId, msg.result);
           store.setAgentRunning(false);
+          // Auto-send next queued message
+          setTimeout(() => sendNextFromQueue(send), 100);
           break;
 
         case 'chat:error': {
@@ -122,6 +145,10 @@ export function useNativePort() {
             });
           }
           store.setAgentRunning(false);
+          // Auto-send next from queue, but NOT after user-initiated interrupt
+          if (!isInterrupt) {
+            setTimeout(() => sendNextFromQueue(send), 100);
+          }
           break;
         }
 
