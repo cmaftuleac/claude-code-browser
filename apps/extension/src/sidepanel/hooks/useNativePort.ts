@@ -13,14 +13,23 @@ function sendNextFromQueue(send: (msg: ClientMessage) => void) {
   store.setAgentRunning(true);
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const sessionId = useChatStore.getState().activeSessionId;
-    send({
-      type: 'chat:send',
-      sessionId: sessionId ?? undefined,
-      message: next.content,
-      anchors: next.anchors,
-      images: next.images,
-      url: tabs[0]?.url ?? '',
+    const url = tabs[0]?.url ?? '';
+    let domain = 'unknown';
+    try { domain = new URL(url).hostname; } catch { /* */ }
+
+    // Load sources for this domain
+    chrome.storage.local.get(`ccb-sources-${domain}`, (result) => {
+      const sources = result[`ccb-sources-${domain}`] as string[] | undefined;
+      const sessionId = useChatStore.getState().activeSessionId;
+      send({
+        type: 'chat:send',
+        sessionId: sessionId ?? undefined,
+        message: next.content,
+        anchors: next.anchors,
+        images: next.images,
+        url,
+        sources: sources?.length ? sources : undefined,
+      });
     });
   });
 }

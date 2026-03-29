@@ -6,6 +6,7 @@ import { SetupScreen } from './components/SetupScreen';
 import { useNativePort } from './hooks/useNativePort';
 import { useConnectionStore } from './stores/connection-store';
 import { useChatStore } from './stores/chat-store';
+import { SourcesPanel } from './components/SourcesPanel';
 
 const DomTreePanel = lazy(() => import('./components/DomTreePanel').then(m => ({ default: m.DomTreePanel })));
 
@@ -28,6 +29,7 @@ export function App() {
       <Suspense fallback={null}>
         <DomTreePanel />
       </Suspense>
+      <SourcesPanel />
       <ChatSidebar send={send} />
     </div>
   );

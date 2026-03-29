@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chat-store';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import type { SlashCommand } from './SlashCommandMenu';
+import { useSourcePaths } from './SourcesPanel';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -25,6 +26,7 @@ export function ChatInput({ send }: Props) {
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { activatePicker } = useElementPicker();
+  const sourcePaths = useSourcePaths();
 
   const pendingAnchors = useChatStore((s) => s.pendingAnchors);
   const clearAnchors = useChatStore((s) => s.clearAnchors);
@@ -164,6 +166,7 @@ export function ChatInput({ send }: Props) {
           anchors,
           images: imgs,
           url: tabs[0]?.url ?? '',
+          sources: sourcePaths.length > 0 ? sourcePaths : undefined,
         });
       });
       setAgentRunning(true);

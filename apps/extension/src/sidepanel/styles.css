@@ -388,6 +388,142 @@ body {
   color: #f0f0f0;
 }
 
+/* ── Sources Panel ──────────────────────────────────────────────────────── */
+
+.sources-panel {
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+
+.sources-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sources-panel__toggle:hover {
+  background: #1e1e3a;
+}
+
+.sources-panel__arrow {
+  font-size: 10px;
+}
+
+.sources-panel__count {
+  margin-left: auto;
+  background: #6366f120;
+  color: #a5b4fc;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+
+.sources-panel__content {
+  padding: 0 12px 8px;
+}
+
+.sources-panel__list {
+  margin-bottom: 6px;
+}
+
+.sources-panel__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.sources-panel__item:hover {
+  background: #1e1e3a;
+}
+
+.sources-panel__path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #9ca3af;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  min-width: 0;
+}
+
+.sources-panel__remove {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0 2px;
+  flex-shrink: 0;
+}
+
+.sources-panel__item:hover .sources-panel__remove {
+  display: block;
+}
+
+.sources-panel__remove:hover {
+  color: #fca5a5;
+}
+
+.sources-panel__add {
+  display: flex;
+  gap: 4px;
+}
+
+.sources-panel__input {
+  flex: 1;
+  background: #111127;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: #e0e0e0;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  outline: none;
+}
+
+.sources-panel__input:focus {
+  border-color: #6366f1;
+}
+
+.sources-panel__input::placeholder {
+  color: #4b5563;
+}
+
+.sources-panel__add-btn {
+  background: #2a2a4a;
+  border: 1px solid #3a3a5a;
+  border-radius: 4px;
+  color: #9ca3af;
+  font-size: 13px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.sources-panel__add-btn:hover {
+  background: #3a3a5a;
+  color: #e0e0e0;
+}
+
+.sources-panel__domain {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #4b5563;
+  text-align: right;
+}
+
 /* ── Message Queue ──────────────────────────────────────────────────────── */
 
 .message-queue {
