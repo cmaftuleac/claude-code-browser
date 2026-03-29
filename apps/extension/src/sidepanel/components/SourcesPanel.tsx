@@ -54,18 +54,6 @@ export function SourcesPanel() {
     });
   }, []);
 
-  // Load sources for current domain — poll every 3s to catch external updates
-  useEffect(() => {
-    loadSources();
-    const onActivated = () => loadSources();
-    chrome.tabs.onActivated.addListener(onActivated);
-    const pollTimer = setInterval(loadSources, 1000);
-    return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
-      clearInterval(pollTimer);
-    };
-  }, [loadSources]);
-
   const loadSources = useCallback(async () => {
     const d = await getDomainKey();
     setDomain(d);
@@ -104,6 +92,18 @@ export function SourcesPanel() {
   const removeSource = useCallback((index: number) => {
     saveSources(sources.filter((_, i) => i !== index));
   }, [sources, saveSources]);
+
+  // Poll sources every second
+  useEffect(() => {
+    loadSources();
+    const onActivated = () => loadSources();
+    chrome.tabs.onActivated.addListener(onActivated);
+    const pollTimer = setInterval(loadSources, 1000);
+    return () => {
+      chrome.tabs.onActivated.removeListener(onActivated);
+      clearInterval(pollTimer);
+    };
+  }, [loadSources]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') { e.preventDefault(); addSource(); }
