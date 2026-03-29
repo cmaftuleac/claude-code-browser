@@ -4,13 +4,13 @@ A Chrome extension that lets you **point at page elements** and have Claude Code
 
 ## Screenshots
 
-| Chat with element chips | Sessions | Sources |
-|---|---|---|
-| ![Chat](screenshots/screenshot-1.jpg) | ![Sessions](screenshots/screenshot-2.jpg) | ![Sources](screenshots/screenshot-3.jpg) |
-
-| DOM Tree | Slash Commands |
-|---|---|
-| ![DOM Tree](screenshots/screenshot-4.jpg) | ![Commands](screenshots/screenshot-5.jpg) |
+<p align="center">
+  <img src="screenshots/screenshot-1.jpg" width="18%" />
+  <img src="screenshots/screenshot-2.jpg" width="18%" />
+  <img src="screenshots/screenshot-3.jpg" width="18%" />
+  <img src="screenshots/screenshot-4.jpg" width="18%" />
+  <img src="screenshots/screenshot-5.jpg" width="18%" />
+</p>
 
 ## How it works
 
