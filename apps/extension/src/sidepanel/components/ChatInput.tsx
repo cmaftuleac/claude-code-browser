@@ -248,7 +248,7 @@ export function ChatInput({ send }: Props) {
         onKeyDown={handleKeyDown}
         onInput={handleInput}
         onPaste={handlePaste}
-        data-placeholder="Queue another message..."
+        data-placeholder="Ask about this page..."
         role="textbox"
         suppressContentEditableWarning
       />
