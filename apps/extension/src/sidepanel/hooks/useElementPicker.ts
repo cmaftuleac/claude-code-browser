@@ -28,8 +28,19 @@ export function useElementPicker() {
       }
     };
 
+    // Also listen for Escape in the side panel to cancel picker
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        chrome.runtime.sendMessage({ type: 'ACTIVATE_PICKER' }); // toggles off if active
+      }
+    };
+
     chrome.runtime.onMessage.addListener(handler);
-    return () => chrome.runtime.onMessage.removeListener(handler);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      chrome.runtime.onMessage.removeListener(handler);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, [addAnchor]);
 
   const activatePicker = useCallback(() => {
