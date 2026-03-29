@@ -115,12 +115,11 @@ let browserResponseHandler: ((id: string, result?: unknown, error?: string) => v
 
 async function getAgentManager() {
   if (!agentManager) {
-    const [{ AgentManager }, { createBrowserTools }] = await Promise.all([
+    const [{ AgentManager }, { getBrowserToolDefinitions }] = await Promise.all([
       import('./agent-manager.js'),
       import('./browser-tools.js'),
     ]);
-    const tools = createBrowserTools();
-    agentManager = new AgentManager(tools);
+    agentManager = new AgentManager(getBrowserToolDefinitions());
   }
   return agentManager;
 }
