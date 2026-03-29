@@ -40,10 +40,25 @@ export function useNativePort() {
       }
 
       switch (msg.type) {
-        case 'connection:ready':
+        case 'connection:ready': {
           setStatus('connected');
           send({ type: 'session:list' });
+
+          // Auto-resume: if we were running when disconnected, resend the last user message
+          const currentStore = useChatStore.getState();
+          if (currentStore.isAgentRunning) {
+            const lastUserMsg = [...currentStore.messages].reverse().find((m) => m.role === 'user');
+            if (lastUserMsg && currentStore.activeSessionId) {
+              send({
+                type: 'chat:send',
+                sessionId: currentStore.activeSessionId,
+                message: lastUserMsg.content,
+                url: '',
+              });
+            }
+          }
           break;
+        }
 
         case 'session:list':
           store.setSessions(msg.sessions);
@@ -78,20 +93,37 @@ export function useNativePort() {
           store.setAgentRunning(false);
           break;
 
-        case 'chat:error':
-          useChatStore.setState({
-            messages: [
-              ...useChatStore.getState().messages,
-              {
-                id: `err-${Date.now()}`,
-                role: 'system',
-                content: `Error: ${msg.error}`,
-                timestamp: Date.now(),
-              },
-            ],
-          });
+        case 'chat:error': {
+          const isInterrupt = msg.error.includes('interrupted') || msg.error.includes('Interrupted');
+          if (isInterrupt) {
+            // Show subtle italic "interrupted" like Claude Code
+            useChatStore.setState({
+              messages: [
+                ...useChatStore.getState().messages,
+                {
+                  id: `int-${Date.now()}`,
+                  role: 'system',
+                  content: '_interrupted_',
+                  timestamp: Date.now(),
+                },
+              ],
+            });
+          } else {
+            useChatStore.setState({
+              messages: [
+                ...useChatStore.getState().messages,
+                {
+                  id: `err-${Date.now()}`,
+                  role: 'system',
+                  content: `Error: ${msg.error}`,
+                  timestamp: Date.now(),
+                },
+              ],
+            });
+          }
           store.setAgentRunning(false);
           break;
+        }
 
         case 'agent:status':
           store.setAgentRunning(msg.status === 'running');
