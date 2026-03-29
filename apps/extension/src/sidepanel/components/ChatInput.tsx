@@ -183,6 +183,12 @@ export function ChatInput({ send }: Props) {
     if (activeSessionId) {
       send({ type: 'agent:interrupt', sessionId: activeSessionId });
     }
+    // Fallback: if the host doesn't respond within 3s, force stop
+    setTimeout(() => {
+      if (useChatStore.getState().isAgentRunning) {
+        useChatStore.getState().setAgentRunning(false);
+      }
+    }, 3000);
   }, [activeSessionId, send]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {

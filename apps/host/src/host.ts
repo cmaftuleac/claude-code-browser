@@ -6,7 +6,7 @@
  */
 
 import { readNativeMessage, writeNativeMessage, log } from './native-io.js';
-import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
@@ -23,7 +23,25 @@ function send(msg: ServerMessage): void {
 
 // Signal ready immediately — before any heavy imports
 send({ type: 'connection:ready', serverVersion: '0.1.0' });
+
+// Check for pending source configs from /browse skill
+checkPendingSources();
+
 log('Host started, waiting for messages');
+
+function checkPendingSources() {
+  try {
+    const pendingFile = '/tmp/ccb-sources/pending.json';
+    if (existsSync(pendingFile)) {
+      const data = JSON.parse(readFileSync(pendingFile, 'utf-8'));
+      if (data.domain && Array.isArray(data.paths)) {
+        send({ type: 'sources:set', domain: data.domain, paths: data.paths });
+        log('Loaded pending sources:', data.domain, data.paths);
+        try { unlinkSync(pendingFile); } catch { /* */ }
+      }
+    }
+  } catch { /* no pending sources */ }
+}
 
 // ── Slash Command Scanner ─────────────────────────────────────────────────
 
@@ -245,6 +263,11 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
       am.setConfig(msg.projectDir);
       break;
     }
+
+    case 'sources:set':
+      // Forward to extension to store in chrome.storage.local
+      send({ type: 'sources:set', domain: msg.domain, paths: msg.paths });
+      break;
 
     case 'browser:response': {
       const handler = await getBrowserResponseHandler();

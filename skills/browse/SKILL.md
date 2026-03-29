@@ -10,11 +10,42 @@ Open `$ARGUMENTS` in Chrome for inspection.
 
 !`ls ~/Library/Application\ Support/Google/Chrome/NativeMessagingHosts/com.claude_code_browser.json 2>/dev/null && echo "EXTENSION_INSTALLED" || ls ~/.config/google-chrome/NativeMessagingHosts/com.claude_code_browser.json 2>/dev/null && echo "EXTENSION_INSTALLED" || echo "EXTENSION_NOT_INSTALLED"`
 
+## Setup sources
+
+Register all workspace directories as sources for the target domain:
+!`echo "CWD=$(pwd)"`
+
+```bash
+URL="$ARGUMENTS"
+DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|[:/].*||')
+[ -z "$DOMAIN" ] && DOMAIN="$URL"
+mkdir -p /tmp/ccb-sources
+
+# Collect all workspace paths - current dir plus any parent workspace dirs
+PATHS="[\"$(pwd)\""
+
+# Check if we're in a monorepo/workspace - add parent if it contains multiple projects
+PARENT=$(dirname "$(pwd)")
+if [ -d "$PARENT" ] && [ "$(ls -d "$PARENT"/*/ 2>/dev/null | wc -l)" -gt 1 ]; then
+  # Add sibling directories (other projects in the workspace)
+  for dir in "$PARENT"/*/; do
+    dir="${dir%/}"
+    if [ "$dir" != "$(pwd)" ] && [ -d "$dir" ]; then
+      PATHS="$PATHS,\"$dir\""
+    fi
+  done
+fi
+
+PATHS="$PATHS]"
+echo "{\"domain\":\"$DOMAIN\",\"paths\":$PATHS}" > /tmp/ccb-sources/pending.json
+echo "Sources registered for $DOMAIN"
+```
+
 ## Instructions
 
 If EXTENSION_NOT_INSTALLED:
-- Tell the user: "The Claude Code Browser extension is not installed. Install it from the Chrome Web Store: https://chromewebstore.google.com/detail/claude-code-browser/ then run `npx claude-code-browser install`"
-- Do NOT proceed with opening the URL until the user confirms installation.
+- Tell the user: "The Claude Code Browser extension is not installed. Install it from the Chrome Web Store then run `npx claude-code-browser install`"
+- Do NOT proceed until the user confirms installation.
 
 If EXTENSION_INSTALLED:
 - Open the URL in Chrome:
@@ -27,5 +58,4 @@ else
   start chrome "$ARGUMENTS"
 fi
 ```
-- Tell the user: "Page opened in Chrome. Click the Claude Code Browser extension icon to open the side panel."
-- Also tell the user to add this workspace as a source in the extension's "Sources" panel so Claude Code can access the project files: !`pwd`
+- Tell the user: "Page opened in Chrome. Workspace sources have been registered automatically. Open the Claude Code Browser side panel to start."
