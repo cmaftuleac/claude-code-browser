@@ -1,0 +1,22 @@
+{
+  "name": "claude-code-browser",
+  "version": "0.1.0",
+  "description": "Claude Code Browser - Native Messaging Host",
+  "bin": {
+    "claude-code-browser": "./dist/host.js",
+    "claude-code-browser-install": "./dist/install.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node -e \"const fs=require('fs'),p=require('path').join(__dirname,'dist','host.js'),c=fs.readFileSync(p,'utf8');fs.writeFileSync(p,c.replace(/^#!.*\\n/,'#!'+process.execPath+'\\n'));fs.chmodSync(p,'755');console.log('Fixed shebang:',process.execPath)\" && echo '{\"type\":\"module\"}' > dist/package.json",
+    "dev": "tsx src/host.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.87",
+    "@claude-code-browser/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0"
+  }
+}
