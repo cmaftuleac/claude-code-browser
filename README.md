@@ -4,36 +4,109 @@ A Chrome extension that lets you **point at page elements** and have Claude Code
 
 ## How it works
 
-1. Open any web page in Chrome
-2. Open the Claude Code Browser side panel
-3. Click on elements to select them
-4. Ask Claude to fix, modify, or inspect them
-5. Claude sees the element, reads your source code, and makes the fix
+1. In VS Code, type `/browse localhost:3000` (or any URL)
+2. Chrome opens the page, workspace sources are registered automatically
+3. Open the Claude Code Browser side panel
+4. Click on elements to select them
+5. Ask Claude to fix, modify, or inspect them
+6. Claude sees the element, reads your source code, and makes the fix
 
 ## Features
 
-- **Element Picker** — Click any element on the page to select it. The extension captures its CSS selector, XPath, DOM path, and HTML snippet.
-- **Inline Element Chips** — Selected elements appear as inline chips in the chat, like `⦾ <button>`, so you can reference multiple elements in natural language.
-- **DOM Tree Panel** — Collapsible tree view of the page's DOM structure. Click nodes to add them to your message. Hovering highlights elements on the page.
-- **Streaming Chat** — Real-time streaming responses from Claude Code, with full Markdown rendering (tables, code blocks, lists).
-- **Session Management** — Browse and resume previous Claude Code sessions.
-- **Browser Tools** — Claude can navigate, take screenshots, click elements, and evaluate JavaScript on your page via `chrome.debugger` API — no separate browser needed.
-- **Image Support** — Paste or drag images into the chat input.
-- **Slash Commands** — Dynamic `/` commands loaded from your Claude Code skills and commands.
-- **VS Code Skill** — `/browse <url>` command available in Claude Code (VS Code, CLI) to open pages for inspection.
+### Element Picker
+- Click any element on the page to select it
+- Captures CSS selector, XPath, full DOM path, and HTML snippet
+- Smart target resolution — clicking an SVG icon selects the parent button
+- Tooltip shows element description while hovering
+- Toggle with the ⌖ button, cancel with Escape or second click
+- Auto-injects on pages loaded before the extension
+
+### Inline Element Chips
+- Selected elements appear as inline `⦾ <button>` chips in the chat editor
+- Mix text and element references naturally: "fix the color of ⦾ `<p>` and align ⦾ `<svg>`"
+- Rich context sent to Claude: DOM path, position, XPath, CSS selector, HTML snippet
+
+### DOM Tree Panel
+- Collapsible tree view of the page's DOM structure
+- Click nodes to add them as chips in the chat
+- Hovering highlights elements on the page (amber overlay)
+- Element picker selection highlights the node in the tree
+- Auto-refreshes on tab switch and page navigation
+- Remembers expanded/collapsed state
+
+### Sources Panel
+- Configure project directories per domain (e.g., `localhost` → your project paths)
+- Passed to Claude Code as `additionalDirectories` — Claude can read/edit your source files
+- Persisted in `chrome.storage.local` keyed by domain
+- **Auto-populated from VS Code** — `/browse` skill registers all workspace directories automatically
+- Add/remove paths manually
+
+### Message Queue
+- Send messages while the agent is running — they queue up
+- Queue items shown as compact rows above the chat input
+- Drag-and-drop to reorder queued messages
+- Edit button fills the chat input with the queued message for editing
+- Remove button to cancel queued messages
+- Auto-sends next queued message when agent finishes
+- Queue preserved on interrupts (not auto-sent after stop)
+
+### Chat Input (Claude Code style)
+- ContentEditable editor with inline element chips
+- **⌖** — Element picker (toggle on/off)
+- **@** — Attach images (paste, drag-drop, or file picker)
+- **//** — Slash commands (dynamically loaded from Claude Code skills)
+- **■** Stop button — visible while agent runs, with 3s fallback
+- **↑** Send button — always enabled, queues if agent is busy
+- Dynamic placeholder: "Ask about this page..." / "Queue a message..."
+
+### Streaming Chat
+- Real-time streaming responses from Claude Code
+- Full Markdown + GFM rendering (tables, code blocks, lists, blockquotes)
+- Links open in new tabs
+- "interrupted" shown as subtle italic text (not red error)
+
+### Session Management
+- Browse and resume previous Claude Code sessions
+- Session titles from Claude Code (custom titles, summaries, first prompt)
+- New Chat button in the top bar
+
+### Browser Tools (via chrome.debugger)
+- Claude can interact with your browser directly — no separate CDP browser needed
+- `browser_navigate` — Navigate to a URL
+- `browser_snapshot` — Get accessibility tree or DOM structure
+- `browser_screenshot` — Capture PNG screenshot
+- `browser_click` — Click elements by CSS selector or XPath
+- `browser_evaluate` — Execute JavaScript on the page
+
+### VS Code Integration
+- `/browse <url>` skill — opens URL in Chrome and registers workspace sources
+- Detects all workspace directories (pwd + `--add-dir` paths)
+- Sources auto-sync to the extension within seconds
+- Works with Claude Code CLI too
+
+### Setup & Onboarding
+- Auto-detection screen when native host isn't installed
+- One command to install everything: `npx claude-code-browser install`
+- Cross-platform (macOS, Linux, Windows)
+- Auto-installs Claude Code CLI if missing
+- Registers native messaging host + `/browse` skill
+- Content script auto-injects on pre-loaded pages
 
 ## Architecture
 
 ```
 Chrome Extension (React)  ←Native Messaging→  Node.js Host  ←Agent SDK→  Claude Code
      ↕ chrome.debugger                              ↕
-  Browser Tools                              Custom MCP Tools
+  Browser Tools                              Custom Tool Definitions
   (navigate, snapshot,                       (browser_navigate,
    screenshot, click,                         browser_snapshot,
    evaluate)                                  browser_screenshot, etc.)
 ```
 
-The extension communicates with a local Node.js host process via Chrome's Native Messaging API. Chrome automatically launches and manages the host process — no manual server needed.
+- **Chrome Extension** — React + Zustand + Vite, Manifest V3 with Side Panel API
+- **Native Messaging Host** — Node.js, launched automatically by Chrome
+- **Claude Agent SDK** — Programmatic control, streaming, sessions, custom tools
+- **No Playwright/MCP** — Uses `chrome.debugger` API directly
 
 ## Installation
 
@@ -45,9 +118,7 @@ The extension communicates with a local Node.js host process via Chrome's Native
 
 ---
 
-### Option A: Install from npm + Chrome Web Store (Recommended)
-
-The simplest way — installs from published packages:
+### Option A: One-command install (Recommended)
 
 ```bash
 npx claude-code-browser install
@@ -59,19 +130,15 @@ This single command:
 3. Installs the `/browse` skill for Claude Code
 4. Opens the Chrome Web Store page for the extension (one-click install)
 
-After installing the extension, **restart Chrome** (Cmd+Q / close all windows, then reopen).
-
-> **Note:** If the extension is already installed, the installer auto-detects its ID. If not, it will prompt you to provide one after installing from the Chrome Web Store.
+After installing, **restart Chrome** (Cmd+Q then reopen).
 
 ---
 
-### Option B: Build everything locally
-
-For development or if you want to run from source:
+### Option B: Build from source
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/anthropics/claude-code-browser.git
+git clone https://github.com/cmaftuleac/claude-code-browser.git
 cd claude-code-browser
 npm install
 
@@ -96,52 +163,50 @@ node apps/host/dist/install.js install <your-extension-id>
 
 ### Verify Installation
 
-Open the extension's side panel. You should see the main chat UI with:
-- **Connected** status (green dot)
-- **Sessions** list
+Open the extension's side panel. You should see:
+- **Connected** (green dot)
+- **Sessions** list with your Claude Code sessions
+- **Sources** panel
 - **Components** (DOM tree) panel
 
-If you see "Setup Required", the native host isn't registered — run the install command shown on screen.
-
-### What the installer does
-
-- Registers the native messaging host so Chrome auto-launches it
-- Installs the `/browse` skill globally (`~/.claude/skills/browse/`)
-- Rewrites the host shebang with your absolute Node.js path (required for Chrome's minimal PATH)
-- On Windows: sets the registry key for Chrome native messaging
+If you see "Setup Required", run the install command shown on screen.
 
 ### Uninstall
 
 ```bash
-# If installed via npm:
 npx claude-code-browser uninstall
-
-# If built locally:
-node apps/host/dist/install.js uninstall
 ```
 
-This removes the native messaging host, wrapper script, and `/browse` skill.
+Removes the native messaging host and `/browse` skill.
 
 ## Usage
 
-### Side Panel
-
-1. Click the extension icon or right-click → Claude Code Browser
-2. **Element Picker** (⌖) — Click the crosshair button, then click any element on the page
-3. **Attach File** (@) — Attach images to your message
-4. **Slash Commands** (/) — Access commands like `/screenshot`, `/navigate`, `/browse`
-5. **DOM Tree** — Expand the "Components" panel to browse the page structure
-6. **Stop** (■) — Cancel a running request
-
-### VS Code / CLI
-
-Use the `/browse` skill in any Claude Code session:
+### From VS Code (recommended)
 
 ```
-/browse https://localhost:3000
+/browse http://localhost:3000
 ```
 
-This opens the URL in Chrome. Use the extension's side panel to select elements and chat.
+This:
+1. Registers all your workspace directories as sources
+2. Opens the URL in Chrome
+3. Sources appear in the extension's Sources panel automatically
+
+### From the Side Panel
+
+1. Click the extension icon to open the side panel
+2. **⌖** Pick elements → they appear as chips in your message
+3. Type your question and send
+4. Claude reads the page, your source code, and responds
+5. Queue follow-up messages while Claude is working
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| Enter | Send message (or queue if agent running) |
+| Shift+Enter | New line |
+| Escape | Cancel element picker |
 
 ## Project Structure
 
@@ -150,55 +215,34 @@ claude-code-browser/
 ├── apps/
 │   ├── extension/          # Chrome Extension (Manifest V3, React, Vite)
 │   │   ├── src/
-│   │   │   ├── background/ # Service worker (native messaging relay)
-│   │   │   ├── content/    # Content script (element picker, DOM tree)
-│   │   │   └── sidepanel/  # React app (chat, components, stores)
+│   │   │   ├── background/ # Service worker (native messaging, content script injection)
+│   │   │   ├── content/    # Content script (element picker, DOM tree, highlighting)
+│   │   │   └── sidepanel/  # React app (chat, queue, DOM tree, sources, stores)
 │   │   └── dist/           # Built extension (load this in Chrome)
 │   ├── host/               # Native Messaging Host (Node.js)
 │   │   └── src/
-│   │       ├── host.ts     # Main entry (message loop)
+│   │       ├── host.ts     # Main entry (message loop, source polling)
 │   │       ├── agent-manager.ts  # Claude Agent SDK integration
-│   │       ├── browser-tools.ts  # Custom browser MCP tools
+│   │       ├── browser-tools.ts  # Custom browser tool definitions
 │   │       └── install.ts  # Cross-platform installer
 │   └── server/             # (Legacy) WebSocket server
 ├── packages/
-│   └── shared/             # Shared TypeScript types
+│   └── shared/             # Shared TypeScript types (ws-protocol)
 ├── skills/
 │   └── browse/SKILL.md     # /browse skill for Claude Code
-└── package.json            # Monorepo root (npm workspaces)
+└── package.json            # Monorepo root (npm workspaces + Turborepo)
 ```
 
 ## Development
 
 ```bash
-# Build everything
-npm run build
-
-# Watch extension (rebuilds on change)
-npm run dev:extension
-
-# Build host after changes
-npm run build:host
-
-# Rebuild extension
-npm run build:extension
+npm run build              # Build everything
+npm run build:extension    # Build Chrome extension only
+npm run build:host         # Build native host only
+npm run dev:extension      # Watch mode for extension
 ```
 
-After rebuilding the extension, click the refresh icon on `chrome://extensions` to reload it.
-
-## How the Browser Tools Work
-
-The extension provides 5 custom tools to Claude Code via the Agent SDK:
-
-| Tool | Description |
-|------|-------------|
-| `browser_navigate` | Navigate the active tab to a URL |
-| `browser_snapshot` | Get the page's accessibility tree or DOM structure |
-| `browser_screenshot` | Capture a PNG screenshot of the visible area |
-| `browser_click` | Click an element by CSS selector or XPath |
-| `browser_evaluate` | Execute JavaScript on the page |
-
-These use Chrome's `chrome.debugger` API — no separate CDP browser needed. When Claude calls a tool, the request flows: Agent SDK → Host → Extension service worker → Side panel → `chrome.debugger` → Result flows back.
+After rebuilding the extension, click the refresh icon on `chrome://extensions` to reload.
 
 ## Author
 
