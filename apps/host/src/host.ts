@@ -30,15 +30,27 @@ setInterval(checkPendingSources, 2000);
 
 log('Host started, waiting for messages');
 
+let lastPendingContent = '';
+
 function checkPendingSources() {
   try {
     const pendingFile = '/tmp/ccb-sources/pending.json';
-    if (existsSync(pendingFile)) {
-      const data = JSON.parse(readFileSync(pendingFile, 'utf-8'));
-      if (data.domain && Array.isArray(data.paths)) {
-        send({ type: 'sources:set', domain: data.domain, paths: data.paths });
-        log('Loaded pending sources:', data.domain, data.paths);
+    if (!existsSync(pendingFile)) {
+      lastPendingContent = '';
+      return;
+    }
+    const content = readFileSync(pendingFile, 'utf-8');
+    // Re-send even if same content (extension may not have received it yet)
+    const data = JSON.parse(content);
+    if (data.domain && Array.isArray(data.paths)) {
+      send({ type: 'sources:set', domain: data.domain, paths: data.paths });
+      // Only delete after sending successfully for a few cycles
+      if (content === lastPendingContent) {
+        // Same content seen twice = extension likely got it, safe to delete
         try { unlinkSync(pendingFile); } catch { /* */ }
+        lastPendingContent = '';
+      } else {
+        lastPendingContent = content;
       }
     }
   } catch { /* no pending sources */ }
