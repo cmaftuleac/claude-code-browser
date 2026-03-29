@@ -107,8 +107,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ACTIVATE_PICKER') {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
-      if (tabId != null) {
-        chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' });
+      const url = tabs[0]?.url ?? '';
+      if (tabId != null && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://')) {
+        chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => {
+          // Ignore "receiving end does not exist" errors
+          void chrome.runtime.lastError;
+        });
       }
     });
     return;
