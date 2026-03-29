@@ -2,6 +2,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from '../stores/chat-store';
+import type { ElementAnchor } from '@claude-code-browser/shared';
 
 interface Props {
   message: ChatMessage;
@@ -22,6 +23,41 @@ const markdownComponents = {
     </a>
   ),
 };
+
+/** Render content with inline element chips for user messages */
+function renderUserContent(content: string, anchors?: ElementAnchor[]) {
+  if (!anchors || anchors.length === 0) {
+    return <span>{content}</span>;
+  }
+
+  // Replace <tagName> tokens with chips
+  const parts: React.ReactNode[] = [];
+  let remaining = content;
+  let key = 0;
+
+  for (const anchor of anchors) {
+    const token = `<${anchor.tagName}>`;
+    const idx = remaining.indexOf(token);
+    if (idx >= 0) {
+      if (idx > 0) {
+        parts.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
+      }
+      parts.push(
+        <span key={key++} className="inline-chip inline-chip--history" title={anchor.domPath}>
+          <span className="inline-chip__icon">{'\u29BE'}</span>
+          <span className="inline-chip__label">&lt;{anchor.tagName}&gt;</span>
+        </span>
+      );
+      remaining = remaining.slice(idx + token.length);
+    }
+  }
+
+  if (remaining) {
+    parts.push(<span key={key++}>{remaining}</span>);
+  }
+
+  return <>{parts}</>;
+}
 
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user';
@@ -44,9 +80,13 @@ export function MessageBubble({ message }: Props) {
         </div>
       )}
       <div className="message-bubble__content">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-          {message.content}
-        </ReactMarkdown>
+        {isUser ? (
+          renderUserContent(message.content, message.anchors)
+        ) : (
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {message.content}
+          </ReactMarkdown>
+        )}
       </div>
     </div>
   );

@@ -751,6 +751,12 @@ body {
   white-space: nowrap;
 }
 
+.inline-chip--history {
+  background: #ffffff20;
+  border-color: #ffffff30;
+  color: #e0e7ff;
+}
+
 /* Bottom toolbar */
 .chat-input__toolbar {
   display: flex;
