@@ -87,7 +87,12 @@ export function SourcesPanel() {
 
   const addSource = useCallback(() => {
     const path = inputValue.trim();
-    if (!path || sources.includes(path)) return;
+    if (!path) {
+      // Focus the input if empty
+      document.querySelector<HTMLInputElement>('.sources-panel__input')?.focus();
+      return;
+    }
+    if (sources.includes(path)) return;
     saveSources([...sources, path]);
     setInputValue('');
   }, [inputValue, sources, saveSources]);
