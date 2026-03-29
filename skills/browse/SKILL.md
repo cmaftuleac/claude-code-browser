@@ -12,43 +12,24 @@ Open `$ARGUMENTS` in Chrome for inspection.
 
 ## Setup sources
 
-Register all workspace directories as sources for the target domain:
-!`echo "CWD=$(pwd)"`
-
+Register the current workspace directory as a source for the target domain:
 ```bash
 URL="$ARGUMENTS"
 DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|[:/].*||')
 [ -z "$DOMAIN" ] && DOMAIN="$URL"
 mkdir -p /tmp/ccb-sources
-
-# Collect all workspace paths - current dir plus any parent workspace dirs
-PATHS="[\"$(pwd)\""
-
-# Check if we're in a monorepo/workspace - add parent if it contains multiple projects
-PARENT=$(dirname "$(pwd)")
-if [ -d "$PARENT" ] && [ "$(ls -d "$PARENT"/*/ 2>/dev/null | wc -l)" -gt 1 ]; then
-  # Add sibling directories (other projects in the workspace)
-  for dir in "$PARENT"/*/; do
-    dir="${dir%/}"
-    if [ "$dir" != "$(pwd)" ] && [ -d "$dir" ]; then
-      PATHS="$PATHS,\"$dir\""
-    fi
-  done
-fi
-
-PATHS="$PATHS]"
-echo "{\"domain\":\"$DOMAIN\",\"paths\":$PATHS}" > /tmp/ccb-sources/pending.json
-echo "Sources registered for $DOMAIN"
+echo "{\"domain\":\"$DOMAIN\",\"paths\":[\"$(pwd)\"]}" > /tmp/ccb-sources/pending.json
+echo "Source registered: $(pwd) -> $DOMAIN"
 ```
 
 ## Instructions
 
 If EXTENSION_NOT_INSTALLED:
-- Tell the user: "The Claude Code Browser extension is not installed. Install it from the Chrome Web Store then run `npx claude-code-browser install`"
-- Do NOT proceed until the user confirms installation.
+- Tell the user to install: Chrome Web Store then `npx claude-code-browser install`
+- Do NOT proceed until confirmed.
 
 If EXTENSION_INSTALLED:
-- Open the URL in Chrome:
+- Open the URL:
 ```bash
 if [ "$(uname)" = "Darwin" ]; then
   open -a "Google Chrome" "$ARGUMENTS"
@@ -58,4 +39,4 @@ else
   start chrome "$ARGUMENTS"
 fi
 ```
-- Tell the user: "Page opened in Chrome. Workspace sources have been registered automatically. Open the Claude Code Browser side panel to start."
+- Tell the user: "Page opened. Workspace source registered. Open the side panel to start. Add more source directories from the Sources panel if needed."
