@@ -169,8 +169,14 @@ export function useNativePort() {
           break;
 
         case 'commands:list':
-          // Store commands for the slash menu — dispatch custom event
           window.dispatchEvent(new CustomEvent('ccb:commands', { detail: msg.commands }));
+          break;
+
+        case 'sources:set':
+          // Store sources in chrome.storage.local, keyed by domain
+          chrome.storage.local.set({ [`ccb-sources-${msg.domain}`]: msg.paths });
+          // Notify SourcesPanel to reload
+          window.dispatchEvent(new CustomEvent('ccb:sources-updated'));
           break;
 
         case 'browser:request':

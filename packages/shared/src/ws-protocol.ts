@@ -34,6 +34,7 @@ export type ClientMessage =
   | { type: 'session:resume'; sessionId: string }
   | { type: 'agent:interrupt'; sessionId: string }
   | { type: 'config:set'; projectDir?: string; cdpPort?: number }
+  | { type: 'sources:set'; domain: string; paths: string[] }
   | { type: 'health:check' }
   | { type: 'commands:list' }
   | {
@@ -90,6 +91,7 @@ export type ServerMessage =
       type: 'commands:list';
       commands: Array<{ name: string; description: string; hint?: string }>;
     }
+  | { type: 'sources:set'; domain: string; paths: string[] }
   | {
       type: 'browser:request';
       requestId: string;
