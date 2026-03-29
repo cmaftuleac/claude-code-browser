@@ -1,0 +1,25 @@
+{
+  "name": "claude-code-browser",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "chrome": "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-ccb",
+    "dev:server": "npm run dev -w apps/server",
+    "dev:extension": "npm run dev -w apps/extension",
+    "build:extension": "npm run build -w apps/extension",
+    "build:server": "npm run build -w apps/server",
+    "build:host": "npm run build -w apps/host",
+    "dev:host": "npm run dev -w apps/host",
+    "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
+    "uninstall-host": "node apps/host/dist/install.js uninstall"
+  },
+  "devDependencies": {
+    "turbo": "^2.1.0",
+    "typescript": "^5.6.0"
+  }
+}

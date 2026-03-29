@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Claude Code Browser",
+  "version": "0.1.0",
+  "description": "Point at page elements and let Claude Code fix them",
+  "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
+  "host_permissions": ["<all_urls>"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "css": ["element-picker.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Claude Code Browser"
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  }
+}
