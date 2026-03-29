@@ -54,23 +54,17 @@ export function SourcesPanel() {
     });
   }, []);
 
-  // Load sources for current domain, and reload on tab change or storage change
+  // Load sources for current domain — poll every 3s to catch external updates
   useEffect(() => {
     loadSources();
     const onActivated = () => loadSources();
-    const onStorageChanged = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      // Reload if any ccb-sources key changed
-      if (Object.keys(changes).some((k) => k.startsWith('ccb-sources-'))) {
-        loadSources();
-      }
-    };
     chrome.tabs.onActivated.addListener(onActivated);
-    chrome.storage.local.onChanged.addListener(onStorageChanged);
+    const pollTimer = setInterval(loadSources, 3000);
     return () => {
       chrome.tabs.onActivated.removeListener(onActivated);
-      chrome.storage.local.onChanged.removeListener(onStorageChanged);
+      clearInterval(pollTimer);
     };
-  }, []);
+  }, [loadSources]);
 
   const loadSources = useCallback(async () => {
     const d = await getDomainKey();
