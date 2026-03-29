@@ -26,10 +26,10 @@ export function App() {
         <button className="app-topbar__new-chat" onClick={clearMessages}>+ New Chat</button>
       </div>
       <SessionList send={send} />
+      <SourcesPanel />
       <Suspense fallback={null}>
         <DomTreePanel />
       </Suspense>
-      <SourcesPanel />
       <ChatSidebar send={send} />
     </div>
   );
