@@ -7,7 +7,11 @@ let highlightOverlay: HTMLDivElement | null = null;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'ACTIVATE_PICKER') {
-    activatePicker();
+    if (pickerActive) {
+      deactivatePicker();
+    } else {
+      activatePicker();
+    }
   }
 
   if (message.type === 'GET_DOM_TREE') {
