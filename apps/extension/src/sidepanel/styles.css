@@ -419,6 +419,11 @@ body {
   border-top: 2px solid #6366f1;
 }
 
+.message-queue__item--editing {
+  border-color: #f59e0b50;
+  background: #f59e0b08;
+}
+
 .message-queue__drag-handle {
   cursor: grab;
   color: #4b5563;
@@ -437,19 +442,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #9ca3af;
-  min-width: 0;
-}
-
-.message-queue__edit-input {
-  flex: 1;
-  background: #111127;
-  border: 1px solid #6366f160;
-  border-radius: 4px;
-  color: #e0e0e0;
-  font-size: 12px;
-  padding: 2px 6px;
-  outline: none;
-  font-family: inherit;
   min-width: 0;
 }
 

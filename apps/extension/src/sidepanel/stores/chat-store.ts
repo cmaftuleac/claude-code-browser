@@ -43,6 +43,8 @@ interface ChatState {
   removeFromQueue: (id: string) => void;
   updateQueueItem: (id: string, content: string) => void;
   reorderQueue: (fromIndex: number, toIndex: number) => void;
+  editingQueueId: string | null;
+  setEditingQueueId: (id: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -99,9 +101,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({ pendingAnchors: state.pendingAnchors.filter((_, i) => i !== index) })),
 
   clearAnchors: () => set({ pendingAnchors: [] }),
-  clearMessages: () => set({ messages: [], activeSessionId: null, messageQueue: [] }),
+  clearMessages: () => set({ messages: [], activeSessionId: null, messageQueue: [], editingQueueId: null }),
 
   // ── Queue ─────────────────────────────────────────────────────────────
+
+  editingQueueId: null,
+  setEditingQueueId: (id) => set({ editingQueueId: id }),
 
   enqueueMessage: (msg) =>
     set((state) => ({ messageQueue: [...state.messageQueue, msg] })),

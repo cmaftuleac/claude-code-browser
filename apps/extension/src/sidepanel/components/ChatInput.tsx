@@ -33,12 +33,36 @@ export function ChatInput({ send }: Props) {
   const isAgentRunning = useChatStore((s) => s.isAgentRunning);
   const setAgentRunning = useChatStore((s) => s.setAgentRunning);
   const enqueueMessage = useChatStore((s) => s.enqueueMessage);
+  const updateQueueItem = useChatStore((s) => s.updateQueueItem);
   const messageQueue = useChatStore((s) => s.messageQueue);
+  const editingQueueId = useChatStore((s) => s.editingQueueId);
+  const setEditingQueueId = useChatStore((s) => s.setEditingQueueId);
 
   // Dynamic placeholder
-  const placeholder = isAgentRunning
+  const placeholder = editingQueueId
+    ? 'Edit queued message...'
+    : isAgentRunning
     ? (messageQueue.length > 0 ? 'Queue another message...' : 'Queue a message...')
     : 'Ask about this page...';
+
+  // When editingQueueId changes, fill editor with that queue item's content
+  useEffect(() => {
+    if (!editingQueueId) return;
+    const item = messageQueue.find((m) => m.id === editingQueueId);
+    if (item && editorRef.current) {
+      editorRef.current.textContent = item.content;
+      editorRef.current.focus();
+      // Move cursor to end
+      const sel = window.getSelection();
+      if (sel) {
+        const r = document.createRange();
+        r.selectNodeContents(editorRef.current);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+  }, [editingQueueId, messageQueue]);
 
   // Load slash commands from host
   useEffect(() => {
@@ -122,14 +146,13 @@ export function ChatInput({ send }: Props) {
     const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
     const imgs = images.length > 0 ? [...images] : undefined;
 
-    if (isAgentRunning) {
-      // Queue the message instead of sending
-      enqueueMessage({
-        id: `q-${Date.now()}`,
-        content: message,
-        anchors,
-        images: imgs,
-      });
+    if (editingQueueId) {
+      // Save back to queue item
+      updateQueueItem(editingQueueId, message);
+      setEditingQueueId(null);
+    } else if (isAgentRunning) {
+      // Queue the message
+      enqueueMessage({ id: `q-${Date.now()}`, content: message, anchors, images: imgs });
     } else {
       // Send immediately
       addUserMessage(message, anchors, imgs);
@@ -151,7 +174,7 @@ export function ChatInput({ send }: Props) {
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, isAgentRunning, enqueueMessage, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
+  }, [pendingAnchors, images, isAgentRunning, editingQueueId, enqueueMessage, updateQueueItem, setEditingQueueId, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
 
   const handleStop = useCallback(() => {
     if (activeSessionId) {
