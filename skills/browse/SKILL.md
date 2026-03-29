@@ -12,14 +12,21 @@ Open `$ARGUMENTS` in Chrome for inspection.
 
 ## Setup sources
 
-Register the current workspace directory as a source for the target domain:
+Register all workspace directories as sources:
 ```bash
 URL="$ARGUMENTS"
 DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|[:/].*||')
 [ -z "$DOMAIN" ] && DOMAIN="$URL"
 mkdir -p /tmp/ccb-sources
-echo "{\"domain\":\"$DOMAIN\",\"paths\":[\"$(pwd)\"]}" > /tmp/ccb-sources/pending.json
-echo "Source registered: $(pwd) -> $DOMAIN"
+
+# Collect pwd + all --add-dir paths from the running claude process
+PATHS="\"$(pwd)\""
+for dir in $(ps aux | grep "claude.*add-dir" | grep -v grep | head -1 | grep -oE '\-\-add-dir [^ ]+' | sed 's/--add-dir //'); do
+  [ -d "$dir" ] && PATHS="$PATHS,\"$dir\""
+done
+
+echo "{\"domain\":\"$DOMAIN\",\"paths\":[$PATHS]}" > /tmp/ccb-sources/pending.json
+echo "Sources registered for $DOMAIN ($(echo "$PATHS" | tr ',' '\n' | wc -l | tr -d ' ') directories)"
 ```
 
 ## Instructions
@@ -39,4 +46,4 @@ else
   start chrome "$ARGUMENTS"
 fi
 ```
-- Tell the user: "Page opened. Workspace source registered. Open the side panel to start. Add more source directories from the Sources panel if needed."
+- Tell the user: "Page opened. All workspace sources registered automatically. Open the side panel to start."
