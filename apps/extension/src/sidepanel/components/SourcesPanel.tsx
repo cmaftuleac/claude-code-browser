@@ -113,10 +113,7 @@ export function SourcesPanel() {
     <div className="sources-panel">
       <button className="sources-panel__toggle" onClick={togglePanel}>
         <span className="sources-panel__arrow">{collapsed ? '\u25B6' : '\u25BC'}</span>
-        <span>Sources</span>
-        {!collapsed && sources.length > 0 && (
-          <span className="sources-panel__count">{sources.length}</span>
-        )}
+        <span>Sources ({sources.length})</span>
       </button>
 
       {!collapsed && (
