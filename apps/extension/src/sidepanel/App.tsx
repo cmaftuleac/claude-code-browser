@@ -12,12 +12,11 @@ const DomTreePanel = lazy(() => import('./components/DomTreePanel').then(m => ({
 export function App() {
   const { send } = useNativePort();
   const status = useConnectionStore((s) => s.status);
+  const clearMessages = useChatStore((s) => s.clearMessages);
 
   if (status !== 'connected') {
     return <SetupScreen />;
   }
-
-  const clearMessages = useChatStore((s) => s.clearMessages);
 
   return (
     <div className="app-container">
