@@ -26,6 +26,11 @@ const markdownComponents = {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const isInterrupted = isSystem && message.content === '_interrupted_';
+
+  if (isInterrupted) {
+    return <div className="message-bubble message-bubble--interrupted">interrupted</div>;
+  }
 
   return (
     <div
