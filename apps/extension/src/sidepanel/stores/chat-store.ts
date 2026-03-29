@@ -7,8 +7,15 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   anchors?: ElementAnchor[];
-  images?: string[];  // base64 data URLs
+  images?: string[];
   isStreaming?: boolean;
+}
+
+export interface QueuedMessage {
+  id: string;
+  content: string;
+  anchors?: ElementAnchor[];
+  images?: string[];
 }
 
 interface ChatState {
@@ -17,6 +24,7 @@ interface ChatState {
   messages: ChatMessage[];
   isAgentRunning: boolean;
   pendingAnchors: ElementAnchor[];
+  messageQueue: QueuedMessage[];
 
   setSessions: (sessions: SessionInfo[]) => void;
   setActiveSession: (id: string | null) => void;
@@ -29,31 +37,30 @@ interface ChatState {
   removeAnchor: (index: number) => void;
   clearAnchors: () => void;
   clearMessages: () => void;
+
+  enqueueMessage: (msg: QueuedMessage) => void;
+  dequeueMessage: () => QueuedMessage | undefined;
+  removeFromQueue: (id: string) => void;
+  updateQueueItem: (id: string, content: string) => void;
+  reorderQueue: (fromIndex: number, toIndex: number) => void;
 }
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   messages: [],
   isAgentRunning: false,
   pendingAnchors: [],
+  messageQueue: [],
 
   setSessions: (sessions) => set({ sessions }),
-
   setActiveSession: (id) => set({ activeSessionId: id }),
 
   addUserMessage: (content, anchors, images) =>
     set((state) => ({
       messages: [
         ...state.messages,
-        {
-          id: `user-${Date.now()}`,
-          role: 'user',
-          content,
-          timestamp: Date.now(),
-          anchors,
-          images,
-        },
+        { id: `user-${Date.now()}`, role: 'user', content, timestamp: Date.now(), anchors, images },
       ],
     })),
 
@@ -61,13 +68,7 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       messages: [
         ...state.messages,
-        {
-          id: messageId,
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-          isStreaming: true,
-        },
+        { id: messageId, role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true },
       ],
     })),
 
@@ -81,13 +82,10 @@ export const useChatStore = create<ChatState>((set) => ({
   completeMessage: (messageId, content) =>
     set((state) => {
       const existing = state.messages.find((m) => m.id === messageId);
-      // If we already have streamed content, keep it. Only use `content` if empty.
       const finalContent = existing && existing.content.length > 0 ? existing.content : content;
       return {
         messages: state.messages.map((msg) =>
-          msg.id === messageId
-            ? { ...msg, content: finalContent, isStreaming: false }
-            : msg,
+          msg.id === messageId ? { ...msg, content: finalContent, isStreaming: false } : msg,
         ),
       };
     }),
@@ -98,11 +96,37 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({ pendingAnchors: [...state.pendingAnchors, anchor] })),
 
   removeAnchor: (index) =>
-    set((state) => ({
-      pendingAnchors: state.pendingAnchors.filter((_, i) => i !== index),
-    })),
+    set((state) => ({ pendingAnchors: state.pendingAnchors.filter((_, i) => i !== index) })),
 
   clearAnchors: () => set({ pendingAnchors: [] }),
+  clearMessages: () => set({ messages: [], activeSessionId: null, messageQueue: [] }),
 
-  clearMessages: () => set({ messages: [], activeSessionId: null }),
+  // ── Queue ─────────────────────────────────────────────────────────────
+
+  enqueueMessage: (msg) =>
+    set((state) => ({ messageQueue: [...state.messageQueue, msg] })),
+
+  dequeueMessage: () => {
+    const queue = get().messageQueue;
+    if (queue.length === 0) return undefined;
+    const [next, ...rest] = queue;
+    set({ messageQueue: rest });
+    return next;
+  },
+
+  removeFromQueue: (id) =>
+    set((state) => ({ messageQueue: state.messageQueue.filter((m) => m.id !== id) })),
+
+  updateQueueItem: (id, content) =>
+    set((state) => ({
+      messageQueue: state.messageQueue.map((m) => (m.id === id ? { ...m, content } : m)),
+    })),
+
+  reorderQueue: (fromIndex, toIndex) =>
+    set((state) => {
+      const queue = [...state.messageQueue];
+      const [item] = queue.splice(fromIndex, 1);
+      queue.splice(toIndex, 0, item);
+      return { messageQueue: queue };
+    }),
 }));

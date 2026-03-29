@@ -388,6 +388,97 @@ body {
   color: #f0f0f0;
 }
 
+/* ── Message Queue ──────────────────────────────────────────────────────── */
+
+.message-queue {
+  flex-shrink: 0;
+  padding: 4px 8px;
+}
+
+.message-queue__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: #6366f108;
+  border: 1px solid #6366f120;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.message-queue__item:last-child {
+  margin-bottom: 0;
+}
+
+.message-queue__item--dragging {
+  opacity: 0.3;
+}
+
+.message-queue__item--drag-over {
+  border-top: 2px solid #6366f1;
+}
+
+.message-queue__drag-handle {
+  cursor: grab;
+  color: #4b5563;
+  font-size: 11px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.message-queue__drag-handle:active {
+  cursor: grabbing;
+}
+
+.message-queue__preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #9ca3af;
+  min-width: 0;
+}
+
+.message-queue__edit-input {
+  flex: 1;
+  background: #111127;
+  border: 1px solid #6366f160;
+  border-radius: 4px;
+  color: #e0e0e0;
+  font-size: 12px;
+  padding: 2px 6px;
+  outline: none;
+  font-family: inherit;
+  min-width: 0;
+}
+
+.message-queue__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  border: none;
+  color: #4b5563;
+  font-size: 11px;
+  cursor: pointer;
+  border-radius: 3px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.message-queue__btn:hover {
+  background: #2a2a4a;
+  color: #d1d5db;
+}
+
+.message-queue__btn--remove:hover {
+  background: #ef444420;
+  color: #fca5a5;
+}
+
 /* ── Chat Input ──────────────────────────────────────────────────────────── */
 
 .chat-input {
