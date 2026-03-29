@@ -38,6 +38,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding: 4px 0;
   background: #16162a;
   border-bottom: 1px solid #2a2a4a;
   flex-shrink: 0;
