@@ -58,12 +58,12 @@ CRITICAL RULES:
 - Always confirm before making destructive changes to source files.`;
 
 export class AgentManager {
-  private browserToolsConfig: ReturnType<typeof import('./browser-tools.js').createBrowserTools> extends infer T ? T : never;
+  private browserTools: unknown[];
   private projectDir: string | undefined;
   private activeAbortControllers = new Map<string, AbortController>();
 
-  constructor(browserTools: unknown) {
-    this.browserToolsConfig = browserTools as typeof this.browserToolsConfig;
+  constructor(browserTools: unknown[]) {
+    this.browserTools = browserTools;
   }
 
   setConfig(projectDir?: string): void {
@@ -101,19 +101,16 @@ export class AgentManager {
         options: {
           allowedTools: [
             'Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep',
-            'mcp__browser__browser_navigate',
-            'mcp__browser__browser_snapshot',
-            'mcp__browser__browser_screenshot',
-            'mcp__browser__browser_click',
-            'mcp__browser__browser_evaluate',
+            'browser_navigate', 'browser_snapshot', 'browser_screenshot',
+            'browser_click', 'browser_evaluate',
           ],
+          tools: this.browserTools as any,
           permissionMode: 'bypassPermissions',
           pathToClaudeCodeExecutable: findClaudeExecutable(),
           systemPrompt: SYSTEM_PROMPT,
           includePartialMessages: true,
           cwd,
           abortController,
-          mcpServers: { browser: this.browserToolsConfig },
           ...(params.sessionId && { resume: params.sessionId }),
         },
       });
