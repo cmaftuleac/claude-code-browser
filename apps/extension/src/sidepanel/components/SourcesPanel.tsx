@@ -54,16 +54,21 @@ export function SourcesPanel() {
     });
   }, []);
 
-  // Load sources for current domain, and reload on tab change or external update
+  // Load sources for current domain, and reload on tab change or storage change
   useEffect(() => {
     loadSources();
     const onActivated = () => loadSources();
-    const onSourcesUpdated = () => loadSources();
+    const onStorageChanged = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      // Reload if any ccb-sources key changed
+      if (Object.keys(changes).some((k) => k.startsWith('ccb-sources-'))) {
+        loadSources();
+      }
+    };
     chrome.tabs.onActivated.addListener(onActivated);
-    window.addEventListener('ccb:sources-updated', onSourcesUpdated);
+    chrome.storage.local.onChanged.addListener(onStorageChanged);
     return () => {
       chrome.tabs.onActivated.removeListener(onActivated);
-      window.removeEventListener('ccb:sources-updated', onSourcesUpdated);
+      chrome.storage.local.onChanged.removeListener(onStorageChanged);
     };
   }, []);
 
