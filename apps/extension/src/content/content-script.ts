@@ -118,7 +118,7 @@ function onClick(e: MouseEvent) {
 
   const anchor = extractElementInfo(currentTarget);
   const treePath = computeElementPath(currentTarget);
-  chrome.runtime.sendMessage({ type: 'ELEMENT_SELECTED', anchor, treePath });
+  chrome.runtime.sendMessage({ type: 'ELEMENT_SELECTED', anchor, treePath }, () => void chrome.runtime.lastError);
   deactivatePicker();
 }
 

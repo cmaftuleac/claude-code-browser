@@ -31,7 +31,7 @@ export function useElementPicker() {
     // Also listen for Escape in the side panel to cancel picker
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        chrome.runtime.sendMessage({ type: 'ACTIVATE_PICKER' }); // toggles off if active
+        chrome.runtime.sendMessage({ type: 'ACTIVATE_PICKER' }, () => void chrome.runtime.lastError);
       }
     };
 
@@ -44,7 +44,7 @@ export function useElementPicker() {
   }, [addAnchor]);
 
   const activatePicker = useCallback(() => {
-    chrome.runtime.sendMessage({ type: 'ACTIVATE_PICKER' });
+    chrome.runtime.sendMessage({ type: 'ACTIVATE_PICKER' }, () => void chrome.runtime.lastError);
   }, []);
 
   return { activatePicker };
