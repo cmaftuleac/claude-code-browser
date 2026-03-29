@@ -19,8 +19,13 @@ function connectNativeHost() {
     return;
   }
 
-  nativePort.onMessage.addListener((msg) => {
-    // Forward all messages from native host to side panel
+  nativePort.onMessage.addListener((msg: { type: string; domain?: string; paths?: string[] }) => {
+    // Handle sources:set directly in service worker — write to storage immediately
+    if (msg.type === 'sources:set' && msg.domain && msg.paths) {
+      chrome.storage.local.set({ [`ccb-sources-${msg.domain}`]: msg.paths });
+      console.log('[CCB-SW] Sources stored for', msg.domain, msg.paths.length, 'paths');
+    }
+    // Forward all messages to side panel
     notifySidePanel(msg);
   });
 
