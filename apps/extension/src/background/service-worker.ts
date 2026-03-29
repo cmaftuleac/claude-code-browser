@@ -108,12 +108,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tabId = tabs[0]?.id;
       const url = tabs[0]?.url ?? '';
-      if (tabId != null && !url.startsWith('chrome://') && !url.startsWith('chrome-extension://')) {
-        chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => {
-          // Ignore "receiving end does not exist" errors
-          void chrome.runtime.lastError;
-        });
-      }
+      if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return;
+
+      chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => {
+        if (chrome.runtime.lastError) {
+          // Content script not injected — inject it now, then retry
+          chrome.scripting.executeScript(
+            { target: { tabId }, files: ['content-script.js'] },
+            () => {
+              void chrome.runtime.lastError;
+              chrome.scripting.insertCSS(
+                { target: { tabId }, files: ['element-picker.css'] },
+                () => {
+                  void chrome.runtime.lastError;
+                  // Retry after injection
+                  chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => void chrome.runtime.lastError);
+                },
+              );
+            },
+          );
+        }
+      });
     });
     return;
   }
@@ -133,7 +148,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       chrome.tabs.sendMessage(tabId, message, (response) => {
         if (chrome.runtime.lastError) {
-          sendResponse(null);
+          // Content script not injected — inject and retry
+          chrome.scripting.executeScript(
+            { target: { tabId }, files: ['content-script.js'] },
+            () => {
+              void chrome.runtime.lastError;
+              chrome.scripting.insertCSS({ target: { tabId }, files: ['element-picker.css'] }, () => void chrome.runtime.lastError);
+              chrome.tabs.sendMessage(tabId, message, (retryResponse) => {
+                sendResponse(chrome.runtime.lastError ? null : retryResponse);
+              });
+            },
+          );
           return;
         }
         sendResponse(response);
