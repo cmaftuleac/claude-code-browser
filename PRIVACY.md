@@ -66,6 +66,10 @@ For questions about this privacy policy, open an issue on GitHub or contact:
 
 **Corneliu Maftuleac** — https://x.com/cmaftuleac
 
+## Chrome Web Store API Use Policy Compliance
+
+Claude Code Browser's use and transfer to any other app of information received from Chrome APIs adheres to the [Chrome Web Store API Use Policy](https://developer.chrome.com/docs/webstore/program-policies/), including the Limited Use requirements.
+
 ## Changes
 
 Any changes to this privacy policy will be reflected in this document and the "Last updated" date above.

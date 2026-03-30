@@ -2,24 +2,15 @@
   "manifest_version": 3,
   "name": "Claude Code Browser",
   "version": "0.1.0",
-  "description": "Point at page elements and let Claude Code fix them",
+  "description": "Point at page elements and let Claude Code fix them. Visual web debugging with element picker, DOM tree, and streaming chat.",
   "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
-  "host_permissions": ["<all_urls>"],
-  "side_panel": {
-    "default_path": "sidepanel.html"
-  },
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
   },
-  "content_scripts": [
-    {
-      "matches": ["<all_urls>"],
-      "js": ["content-script.js"],
-      "css": ["element-picker.css"],
-      "run_at": "document_idle"
-    }
-  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
     "default_title": "Claude Code Browser"
   },
