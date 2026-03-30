@@ -4,6 +4,15 @@
   "version": "0.1.0",
   "description": "Point at page elements and let Claude Code fix them. Visual web debugging with element picker, DOM tree, and streaming chat.",
   "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-script.js"],
+      "css": ["element-picker.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"
