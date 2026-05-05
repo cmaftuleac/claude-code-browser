@@ -102,42 +102,74 @@ function isExtensionInChromePrefs(): boolean {
   return false;
 }
 
-/** Scan unpacked extension directories for any "Claude Code Browser" manifest.
- *  Returns the extension's directory ID if found. */
-function detectUnpackedExtensionId(): string | null {
-  for (const baseDir of getChromeBaseDirs()) {
-    for (const profile of chromeProfiles()) {
-      const extDir = join(baseDir, profile, 'Extensions');
-      if (!existsSync(extDir)) continue;
-      try {
-        for (const id of readdirSync(extDir)) {
-          const versions = join(extDir, id);
-          if (!existsSync(versions)) continue;
-          try {
-            for (const ver of readdirSync(versions)) {
-              const manifest = join(versions, ver, 'manifest.json');
-              if (existsSync(manifest)) {
-                const content = readFileSync(manifest, 'utf-8');
-                if (content.includes('Claude Code Browser')) return id;
-              }
-            }
-          } catch { /* skip */ }
-        }
-      } catch { /* skip */ }
-    }
-  }
-  return null;
+function manifestIsCcb(manifestPath: string): boolean {
+  if (!existsSync(manifestPath)) return false;
+  try {
+    return readFileSync(manifestPath, 'utf-8').includes('Claude Code Browser');
+  } catch { return false; }
 }
 
-/** Combined detection: prefer an unpacked extension ID (so dev installs work),
- *  fall back to confirming the Web Store extension is registered in Chrome's
- *  preference files (covers extensions that are signed/installed but not yet
- *  unpacked into Extensions/<id>/ — happens for some Web Store installs). */
-function detectInstalledExtensionId(): string | null {
-  const unpacked = detectUnpackedExtensionId();
-  if (unpacked) return unpacked;
-  if (STORE_EXTENSION_ID && isExtensionInChromePrefs()) return STORE_EXTENSION_ID;
-  return null;
+/** Find all extension IDs whose manifest identifies them as Claude Code Browser.
+ *  Catches both:
+ *   - Web Store / unpacked-into-Extensions installs at <profile>/Extensions/<id>/<ver>/manifest.json
+ *   - Dev unpacked extensions referenced from Secure Preferences with an absolute path field */
+function detectInstalledExtensionIds(): string[] {
+  const found = new Set<string>();
+
+  for (const baseDir of getChromeBaseDirs()) {
+    for (const profile of chromeProfiles()) {
+      // 1. Scan Extensions/<id>/<ver>/manifest.json
+      const extDir = join(baseDir, profile, 'Extensions');
+      if (existsSync(extDir)) {
+        try {
+          for (const id of readdirSync(extDir)) {
+            const versions = join(extDir, id);
+            try {
+              for (const ver of readdirSync(versions)) {
+                if (manifestIsCcb(join(versions, ver, 'manifest.json'))) {
+                  found.add(id);
+                  break;
+                }
+              }
+            } catch { /* skip */ }
+          }
+        } catch { /* skip */ }
+      }
+
+      // 2. Read Secure Preferences and Preferences for extensions.settings entries
+      //    whose `path` is absolute (dev unpacked) and points to a CCB manifest.
+      for (const fname of ['Secure Preferences', 'Preferences']) {
+        const p = join(baseDir, profile, fname);
+        if (!existsSync(p)) continue;
+        try {
+          const data = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
+          const settings = ((data.extensions as Record<string, unknown>)?.settings) as
+            | Record<string, { path?: string; manifest?: { name?: string } }>
+            | undefined;
+          if (!settings) continue;
+          for (const [id, entry] of Object.entries(settings)) {
+            if (!/^[a-z]{32}$/.test(id)) continue;
+            // Direct manifest.name match
+            if (entry.manifest?.name === 'Claude Code Browser') {
+              found.add(id);
+              continue;
+            }
+            // Absolute path → check the source manifest
+            const path = entry.path;
+            if (path && (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path))) {
+              if (manifestIsCcb(join(path, 'manifest.json'))) found.add(id);
+            }
+          }
+        } catch { /* skip */ }
+      }
+    }
+  }
+
+  // 3. If the Web Store ID appears in install_signature.ids (signed-install record),
+  //    include it even if not currently in extensions.settings.
+  if (STORE_EXTENSION_ID && isExtensionInChromePrefs()) found.add(STORE_EXTENSION_ID);
+
+  return [...found];
 }
 
 // ── Install Steps ───────────────────────────────────────────────────────────
@@ -175,7 +207,12 @@ function checkClaudeCode(): boolean {
   }
 }
 
-function installNativeHost(extensionId: string): boolean {
+function installNativeHost(extensionIds: string[]): boolean {
+  const ids = [...new Set(extensionIds.filter((id) => id && /^[a-z]{32}$/.test(id)))];
+  if (ids.length === 0) {
+    fail('No valid extension IDs to register');
+    return false;
+  }
   const hostJs = getHostJsPath();
   const dir = dirname(hostJs);
   const nodePath = process.execPath;
@@ -206,7 +243,7 @@ function installNativeHost(extensionId: string): boolean {
     description: 'Claude Code Browser - Native Messaging Host',
     path: execPath,
     type: 'stdio',
-    allowed_origins: [`chrome-extension://${extensionId}/`],
+    allowed_origins: ids.map((id) => `chrome-extension://${id}/`),
   };
 
   mkdirSync(manifestDir, { recursive: true });
@@ -222,7 +259,7 @@ function installNativeHost(extensionId: string): boolean {
     } catch { /* non-fatal */ }
   }
 
-  ok(`Native messaging host registered for ${extensionId}`);
+  ok(`Native messaging host registered for ${ids.length} extension ID${ids.length > 1 ? 's' : ''}: ${ids.join(', ')}`);
   return true;
 }
 
@@ -297,31 +334,27 @@ function install(explicitId?: string): void {
   // Step 2: Check/install Claude Code
   checkClaudeCode();
 
-  // Step 3: Install native host
-  let extensionId = explicitId || '';
+  // Step 3: Gather all extension IDs that should connect to this host.
+  // We register multiple origins so production (Web Store) and dev (unpacked)
+  // installs both work without the user having to pick one.
+  const ids = new Set<string>();
+  if (explicitId) ids.add(explicitId);
+  for (const id of detectInstalledExtensionIds()) ids.add(id);
+  if (STORE_EXTENSION_ID) ids.add(STORE_EXTENSION_ID);
 
-  if (!extensionId) {
-    // Try to detect installed extension
-    const detected = detectInstalledExtensionId();
-    if (detected) {
-      extensionId = detected;
-      info(`Detected extension ID: ${extensionId}`);
-    } else if (STORE_EXTENSION_ID) {
-      extensionId = STORE_EXTENSION_ID;
-    } else {
-      fail('Could not detect extension ID.');
-      console.log('');
-      console.log('  Please provide your extension ID:');
-      console.log('    1. Open chrome://extensions');
-      console.log('    2. Enable "Developer mode"');
-      console.log('    3. Find "Claude Code Browser" and copy the ID');
-      console.log('    4. Run: npx claude-code-browser install <extension-id>');
-      console.log('');
-      process.exit(1);
-    }
+  if (ids.size === 0) {
+    fail('Could not detect extension ID.');
+    console.log('');
+    console.log('  Please provide your extension ID:');
+    console.log('    1. Open chrome://extensions');
+    console.log('    2. Enable "Developer mode"');
+    console.log('    3. Find "Claude Code Browser" and copy the ID');
+    console.log('    4. Run: npx claude-code-browser install <extension-id>');
+    console.log('');
+    process.exit(1);
   }
 
-  installNativeHost(extensionId);
+  installNativeHost([...ids]);
 
   // Step 3b: Kill any running host so the new manifest path takes effect on next connect
   killStaleHosts();
@@ -329,10 +362,10 @@ function install(explicitId?: string): void {
   // Step 4: Install /browse skill
   installSkill();
 
-  // Step 5: Extension
-  const detected = detectInstalledExtensionId();
-  if (detected) {
-    ok('Chrome extension installed');
+  // Step 5: Extension presence check (purely informational)
+  const detected = detectInstalledExtensionIds();
+  if (detected.length > 0) {
+    ok(`Chrome extension installed (${detected.length} variant${detected.length > 1 ? 's' : ''} detected)`);
   } else {
     printExtensionInstallInstructions();
   }
