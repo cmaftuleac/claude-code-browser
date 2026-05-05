@@ -78,30 +78,6 @@ function chromeProfiles(): string[] {
   return ['Default', ...Array.from({ length: 10 }, (_, i) => `Profile ${i + 1}`)];
 }
 
-/** Check if STORE_EXTENSION_ID is referenced in any of Chrome's profile preference files.
- *  Catches Web Store installs that haven't been unpacked into Extensions/<id>/ yet,
- *  and installs tracked only via Chrome's signed-install list. */
-function isExtensionInChromePrefs(): boolean {
-  if (!STORE_EXTENSION_ID) return false;
-  for (const baseDir of getChromeBaseDirs()) {
-    for (const profile of chromeProfiles()) {
-      for (const fname of ['Preferences', 'Secure Preferences']) {
-        const p = join(baseDir, profile, fname);
-        if (!existsSync(p)) continue;
-        try {
-          const data = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
-          const exts = (data.extensions as Record<string, unknown> | undefined) ?? {};
-          const settings = (exts.settings as Record<string, unknown> | undefined) ?? {};
-          if (STORE_EXTENSION_ID in settings) return true;
-          const sig = exts.install_signature as { ids?: string[] } | undefined;
-          if (sig?.ids && sig.ids.includes(STORE_EXTENSION_ID)) return true;
-        } catch { /* skip unreadable / non-JSON */ }
-      }
-    }
-  }
-  return false;
-}
-
 function manifestIsCcb(manifestPath: string): boolean {
   if (!existsSync(manifestPath)) return false;
   try {
@@ -164,10 +140,6 @@ function detectInstalledExtensionIds(): string[] {
       }
     }
   }
-
-  // 3. If the Web Store ID appears in install_signature.ids (signed-install record),
-  //    include it even if not currently in extensions.settings.
-  if (STORE_EXTENSION_ID && isExtensionInChromePrefs()) found.add(STORE_EXTENSION_ID);
 
   return [...found];
 }
