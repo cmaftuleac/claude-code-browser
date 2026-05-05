@@ -63,42 +63,62 @@ function getManifestDir(): string {
   }
 }
 
-function detectInstalledExtensionId(): string | null {
-  // Look for the extension in Chrome's profile directories
-  const profileDirs: string[] = [];
+function getChromeBaseDirs(): string[] {
   switch (platform()) {
-    case 'darwin':
-      profileDirs.push(join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome'));
-      break;
-    case 'linux':
-      profileDirs.push(join(homedir(), '.config', 'google-chrome'));
-      break;
-    case 'win32':
-      profileDirs.push(join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data'));
-      break;
+    case 'darwin': return [join(homedir(), 'Library', 'Application Support', 'Google', 'Chrome')];
+    case 'linux': return [join(homedir(), '.config', 'google-chrome')];
+    case 'win32': return [join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data')];
+    default: return [];
   }
+}
 
-  for (const baseDir of profileDirs) {
-    // Check Default and Profile N directories
-    const profiles = ['Default', ...Array.from({ length: 10 }, (_, i) => `Profile ${i + 1}`)];
-    for (const profile of profiles) {
+function chromeProfiles(): string[] {
+  // Default plus Profile 1..10. We don't list the dir because it contains many
+  // non-profile entries; this fixed list catches all common cases.
+  return ['Default', ...Array.from({ length: 10 }, (_, i) => `Profile ${i + 1}`)];
+}
+
+/** Check if STORE_EXTENSION_ID is referenced in any of Chrome's profile preference files.
+ *  Catches Web Store installs that haven't been unpacked into Extensions/<id>/ yet,
+ *  and installs tracked only via Chrome's signed-install list. */
+function isExtensionInChromePrefs(): boolean {
+  if (!STORE_EXTENSION_ID) return false;
+  for (const baseDir of getChromeBaseDirs()) {
+    for (const profile of chromeProfiles()) {
+      for (const fname of ['Preferences', 'Secure Preferences']) {
+        const p = join(baseDir, profile, fname);
+        if (!existsSync(p)) continue;
+        try {
+          const data = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
+          const exts = (data.extensions as Record<string, unknown> | undefined) ?? {};
+          const settings = (exts.settings as Record<string, unknown> | undefined) ?? {};
+          if (STORE_EXTENSION_ID in settings) return true;
+          const sig = exts.install_signature as { ids?: string[] } | undefined;
+          if (sig?.ids && sig.ids.includes(STORE_EXTENSION_ID)) return true;
+        } catch { /* skip unreadable / non-JSON */ }
+      }
+    }
+  }
+  return false;
+}
+
+/** Scan unpacked extension directories for any "Claude Code Browser" manifest.
+ *  Returns the extension's directory ID if found. */
+function detectUnpackedExtensionId(): string | null {
+  for (const baseDir of getChromeBaseDirs()) {
+    for (const profile of chromeProfiles()) {
       const extDir = join(baseDir, profile, 'Extensions');
       if (!existsSync(extDir)) continue;
       try {
-        const ids = readdirSync(extDir);
-        for (const id of ids) {
-          // Check if this extension has our manifest
+        for (const id of readdirSync(extDir)) {
           const versions = join(extDir, id);
           if (!existsSync(versions)) continue;
           try {
-            const vers = readdirSync(versions);
-            for (const ver of vers) {
+            for (const ver of readdirSync(versions)) {
               const manifest = join(versions, ver, 'manifest.json');
               if (existsSync(manifest)) {
                 const content = readFileSync(manifest, 'utf-8');
-                if (content.includes('Claude Code Browser')) {
-                  return id;
-                }
+                if (content.includes('Claude Code Browser')) return id;
               }
             }
           } catch { /* skip */ }
@@ -106,6 +126,17 @@ function detectInstalledExtensionId(): string | null {
       } catch { /* skip */ }
     }
   }
+  return null;
+}
+
+/** Combined detection: prefer an unpacked extension ID (so dev installs work),
+ *  fall back to confirming the Web Store extension is registered in Chrome's
+ *  preference files (covers extensions that are signed/installed but not yet
+ *  unpacked into Extensions/<id>/ — happens for some Web Store installs). */
+function detectInstalledExtensionId(): string | null {
+  const unpacked = detectUnpackedExtensionId();
+  if (unpacked) return unpacked;
+  if (STORE_EXTENSION_ID && isExtensionInChromePrefs()) return STORE_EXTENSION_ID;
   return null;
 }
 
