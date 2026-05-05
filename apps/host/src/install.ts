@@ -360,6 +360,9 @@ function uninstall(): void {
     ok('Native messaging host manifest removed');
   }
 
+  // Kill the running host so the extension's connection drops and it returns to Setup Required.
+  killStaleHosts();
+
   // Remove wrapper
   const hostJs = getHostJsPath();
   const dir = dirname(hostJs);
