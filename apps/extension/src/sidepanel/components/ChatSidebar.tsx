@@ -4,6 +4,7 @@ import { useChatStore } from '../stores/chat-store';
 import { MessageList } from './MessageList';
 import { MessageQueue } from './MessageQueue';
 import { ChatInput } from './ChatInput';
+import { ReviewPrompt } from './ReviewPrompt';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -21,6 +22,7 @@ export function ChatSidebar({ send }: Props) {
       )}
       <MessageList />
       <MessageQueue />
+      <ReviewPrompt />
       <ChatInput send={send} />
     </div>
   );

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import { useConnectionStore } from '../stores/connection-store';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, bumpStat } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
 
 /** Get target tab URL and domain from the pinned tab */
@@ -144,6 +144,7 @@ export function useNativePort() {
 
         case 'session:created': {
           store.setActiveSession(msg.sessionId);
+          bumpStat('sessionCount');
           // Register this session for the target tab's domain, then refresh session list
           getTargetTabInfo((_url, domain) => {
             if (!domain || domain === 'unknown') return;

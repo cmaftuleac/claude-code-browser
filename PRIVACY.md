@@ -56,9 +56,10 @@ All communication between the extension and Claude Code happens **locally on you
 
 ## Open Source
 
-This extension is fully open source under the MIT license. Copyright (c) 2026 Fineguide.AI (Corneliu Maftuleac). You can inspect the complete source code at:
+This extension is fully open source under the MIT license. Copyright (c) 2026 Fineguide.AI (Corneliu Maftuleac).
 
-https://github.com/cmaftuleac/claude-code-browser
+- Source code: https://github.com/cmaftuleac/claude-code-browser
+- Chrome Web Store listing: https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf
 
 ## Contact
 

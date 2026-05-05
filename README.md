@@ -2,6 +2,8 @@
 
 A Chrome extension that lets you **point at page elements** and have Claude Code fix them — no screenshots, no copy-pasting selectors.
 
+**[➜ Install from the Chrome Web Store](https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf)**
+
 ## Screenshots
 
 <p align="center">

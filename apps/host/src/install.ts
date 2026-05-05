@@ -18,9 +18,8 @@ import { execSync, exec } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HOST_NAME = 'com.claude_code_browser';
-// TODO: Replace with actual Chrome Web Store ID after publishing
-const STORE_EXTENSION_ID = '';
-const STORE_URL = 'https://chromewebstore.google.com/detail/claude-code-browser/';
+const STORE_EXTENSION_ID = 'mnibceaaapcppokpnnljohdlmojjgbkf';
+const STORE_URL = 'https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

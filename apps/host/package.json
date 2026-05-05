@@ -1,6 +1,6 @@
 {
   "name": "claude-code-browser",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Native messaging host (local Node.js bridge) for the Claude Code Browser Chrome extension. Bridges Chrome and your existing Claude Code CLI over Chrome's native messaging API so a Claude Code agent session can navigate, screenshot, snapshot the DOM and pick elements from pages open in your browser. Spawns a local @anthropic-ai/claude-agent-sdk session that reuses your existing Claude Code authentication (no extra account or API key) and exposes browser tools to the agent over MCP. Ships with the bundled /browse skill and an installer that wires up the native-messaging manifest, registers the host with Chrome, and installs the skill into your Claude Code config. Companion package — not a standalone Claude Code. Developed by Fineguide.AI (Corneliu Maftuleac).",
   "author": {
     "name": "Corneliu Maftuleac",
