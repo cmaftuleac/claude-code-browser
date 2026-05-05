@@ -1,4 +1,12 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+
+// Mirrors Claude Code's terminal "thinking" indicator: 6 base glyphs played as
+// a palindrome (forward then reversed) so the animation eases at the ends
+// instead of snapping back to the first frame. 120ms per frame matches CC's
+// `Math.floor(time/120)` frame index.
+const SPINNER_BASE = ['·', '✢', '✳', '✶', '✻', '✽'];
+const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
+const SPINNER_INTERVAL_MS = 120;
 import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
 import { useChatStore } from '../stores/chat-store';
 import { useConnectionStore } from '../stores/connection-store';
@@ -35,6 +43,15 @@ export function ChatInput({ send }: Props) {
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const isAgentRunning = useChatStore((s) => s.isAgentRunning);
   const setAgentRunning = useChatStore((s) => s.setAgentRunning);
+
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  useEffect(() => {
+    if (!isAgentRunning) { setSpinnerFrame(0); return; }
+    const id = setInterval(() => {
+      setSpinnerFrame((i) => (i + 1) % SPINNER_FRAMES.length);
+    }, SPINNER_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isAgentRunning]);
 
   const placeholder = 'Ask about this page...';
 
@@ -226,6 +243,11 @@ export function ChatInput({ send }: Props) {
 
   return (
     <div className="chat-input" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+      {isAgentRunning && (
+        <div className="chat-input__spinner" aria-label="Processing">
+          {SPINNER_FRAMES[spinnerFrame]}
+        </div>
+      )}
       {showSlashMenu && (
         <SlashCommandMenu
           commands={slashCommands}
