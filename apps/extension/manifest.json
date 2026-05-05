@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Claude Code Browser",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "Fineguide.AI (Corneliu Maftuleac) — https://fineguide.ai",
-  "description": "Point at page elements and let Claude Code fix them. Visual web debugging with element picker, DOM tree, and streaming chat. By Fineguide.AI (Corneliu Maftuleac).",
+  "description": "Point at page elements and let Claude Code fix them. Visual debugging with picker, DOM tree, streaming chat. By Fineguide.AI.",
   "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "content_scripts": [
