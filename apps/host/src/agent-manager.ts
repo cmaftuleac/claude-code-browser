@@ -44,6 +44,25 @@ export interface SendMessageParams {
   sources?: string[];
 }
 
+/** Best-effort string extraction from any SDK message — used for unknown
+ *  / unhandled message types so they get *some* visible representation
+ *  instead of being silently dropped. */
+const HUMAN_READABLE_FIELDS = ['message', 'text', 'content', 'summary', 'description', 'output', 'stdout', 'error', 'reason', 'name'] as const;
+
+function extractHumanReadable(message: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key of HUMAN_READABLE_FIELDS) {
+    const v = message[key];
+    if (typeof v === 'string' && v.trim()) parts.push(v.trim());
+    else if (Array.isArray(v) && v.every((x) => typeof x === 'string') && v.length > 0) parts.push((v as string[]).join('\n'));
+  }
+  return parts.join('\n');
+}
+
+function systemHeader(type: string, subtype?: string): string {
+  return `_${subtype ? `${type}/${subtype}` : type}_`;
+}
+
 function formatToolDetail(name: string, rawInput: string): string {
   try {
     const input = JSON.parse(rawInput) as Record<string, unknown>;
@@ -54,6 +73,13 @@ function formatToolDetail(name: string, rawInput: string): string {
       case 'Write': return `Writing file\n\`${input.file_path}\``;
       case 'Grep': return `Searching for \`${input.pattern}\`${input.path ? ` in \`${input.path}\`` : ''}`;
       case 'Glob': return `Finding files \`${input.pattern}\`${input.path ? ` in \`${input.path}\`` : ''}`;
+      case 'ExitPlanMode': {
+        // The SDK injects the plan body into the input as a `plan` field at runtime.
+        const plan = typeof input.plan === 'string' ? input.plan : '';
+        if (plan) return `**Plan**\n\n${plan}`;
+        if (typeof input.planFilePath === 'string') return `**Plan** (see \`${input.planFilePath}\`)`;
+        return '**Plan**';
+      }
       default: {
         if (name.startsWith('browser_')) return `Running ${name.replace('_', ' ')}`;
         const firstVal = Object.values(input)[0];
@@ -382,6 +408,104 @@ CRITICAL RULES:
               this.send({ type: 'chat:error', sessionId: turnSid, error: (r.error as string) || 'Agent returned an error' });
               this.send({ type: 'agent:status', sessionId: turnSid, status: 'error' });
             }
+            break;
+          }
+          case 'auth_status': {
+            const m = message as { isAuthenticating?: boolean; output?: string[]; error?: string };
+            const lines: string[] = [systemHeader('auth_status')];
+            if (m.isAuthenticating) lines.push('Authenticating…');
+            if (m.error) lines.push(`Error: ${m.error}`);
+            if (m.output?.length) lines.push(m.output.join('\n'));
+            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
+            break;
+          }
+          case 'rate_limit_event': {
+            const info = (message as { rate_limit_info?: { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number } }).rate_limit_info ?? {};
+            const lines: string[] = [systemHeader('rate_limit_event')];
+            if (info.status) lines.push(`Status: \`${info.status}\``);
+            if (info.rateLimitType) lines.push(`Window: \`${info.rateLimitType}\``);
+            if (typeof info.utilization === 'number') lines.push(`Utilization: ${Math.round(info.utilization * 100)}%`);
+            if (info.resetsAt) lines.push(`Resets: ${new Date(info.resetsAt * 1000).toLocaleString()}`);
+            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
+            break;
+          }
+          case 'system': {
+            const m = message as Record<string, unknown> & { subtype?: string };
+            const subtype = m.subtype;
+            switch (subtype) {
+              case 'api_retry': {
+                const attempt = m.attempt ?? '?';
+                const max = m.max_retries ?? '?';
+                const errStatus = m.error_status ? ` (HTTP ${m.error_status})` : '';
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'api_retry')}\n\nRetrying API call (${attempt}/${max})${errStatus}…` });
+                break;
+              }
+              case 'task_started': {
+                const desc = (m.description as string) || 'subagent task';
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: 'Task', summary: `**Task**: ${desc}` });
+                break;
+              }
+              case 'task_notification': {
+                const status = (m.status as string) || 'completed';
+                const summary = (m.summary as string) || '';
+                const body = summary ? `**${status}** — ${summary}` : `**${status}**`;
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'task_notification')}\n\n${body}` });
+                break;
+              }
+              case 'local_command_output': {
+                const content = (m.content as string) || '';
+                if (content.trim()) {
+                  this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'local_command_output')}\n\n${content}` });
+                }
+                break;
+              }
+              case 'hook_response': {
+                const stdout = (m.stdout as string) || '';
+                const stderr = (m.stderr as string) || '';
+                const out = stdout || stderr;
+                if (out.trim()) {
+                  const hookName = (m.hook_name as string) || 'hook';
+                  this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', `hook_response/${hookName}`)}\n\n${out}` });
+                }
+                break;
+              }
+              // Low-value subtypes — don't render. Log so we notice if their semantics change.
+              case 'init':
+              case 'compact_boundary':
+              case 'session_state_changed':
+              case 'status':
+              case 'hook_started':
+              case 'hook_progress':
+              case 'task_progress':
+              case 'files_persisted':
+              case 'elicitation_complete':
+                break;
+              default: {
+                // Unknown subtype — best-effort surface
+                const text = extractHumanReadable(m);
+                const header = systemHeader('system', subtype);
+                const body = text ? `${header}\n\n${text}` : header;
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
+                log('best-effort surfaced unknown system subtype:', subtype ?? '?');
+                break;
+              }
+            }
+            break;
+          }
+          // Redundant or non-user-visible — already conveyed via stream_event / silent.
+          case 'assistant':
+          case 'user':
+          case 'tool_progress':
+          case 'prompt_suggestion':
+            break;
+          default: {
+            // Genuinely unknown top-level type — best-effort surface so it never silently drops.
+            const m = message as Record<string, unknown>;
+            const text = extractHumanReadable(m);
+            const header = systemHeader((m.type as string) || 'unknown');
+            const body = text ? `${header}\n\n${text}` : header;
+            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
+            log('best-effort surfaced unknown SDK message type:', (m.type as string) || '?');
             break;
           }
         }
