@@ -12,22 +12,26 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { spawn } from 'node:child_process';
 import { log } from './native-io.js';
 
 /** Find the SDK's cli.js — a Node.js script version of Claude Code.
  *  We run this under Node.js instead of the Bun-compiled binary to avoid
- *  Gatekeeper blocking native .node addon extraction from Chrome context. */
+ *  Gatekeeper blocking native .node addon extraction from Chrome context.
+ *
+ *  cli.js is not in the SDK's package.json `exports`, so we can't resolve it
+ *  directly. Instead, resolve the SDK's main entry and look in the same dir.
+ *  This works regardless of install layout (workspace, hoisted npm, npx cache). */
 function findClaudeCliJs(): string {
-  const candidates = [
-    join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
-    join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js'),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
+  const require = createRequire(import.meta.url);
+  const sdkMain = require.resolve('@anthropic-ai/claude-agent-sdk');
+  const cliJs = join(dirname(sdkMain), 'cli.js');
+  if (!existsSync(cliJs)) {
+    throw new Error(`Claude Agent SDK cli.js not found at ${cliJs}. The installed SDK version may not ship cli.js — apps/host/package.json pins @anthropic-ai/claude-agent-sdk to a version that includes it.`);
   }
-  throw new Error('Claude Agent SDK cli.js not found');
+  return cliJs;
 }
 
 export interface SendMessageParams {
