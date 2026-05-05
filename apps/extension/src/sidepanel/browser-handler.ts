@@ -1,6 +1,7 @@
 /**
  * Handles browser:request messages from the native host.
  * Executes browser operations via chrome.debugger / chrome.tabs / chrome.scripting APIs.
+ * All operations target the pinned targetTabId, NOT the active tab.
  */
 
 type BrowserRequest = {
@@ -15,12 +16,6 @@ type BrowserResponse = {
   result?: unknown;
   error?: string;
 };
-
-async function getActiveTab(): Promise<chrome.tabs.Tab> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) throw new Error('No active tab');
-  return tab;
-}
 
 async function ensureDebuggerAttached(tabId: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -53,45 +48,42 @@ function sendDebuggerCommand(tabId: number, method: string, params?: Record<stri
   });
 }
 
-async function handleNavigate(params: Record<string, unknown>): Promise<unknown> {
+async function handleNavigate(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const url = params.url as string;
   if (!url) throw new Error('url is required');
 
-  const tab = await getActiveTab();
-  await chrome.tabs.update(tab.id!, { url });
+  await chrome.tabs.update(tabId, { url });
 
   // Wait for page to load
   await new Promise<void>((resolve) => {
-    const listener = (tabId: number, info: chrome.tabs.TabChangeInfo) => {
-      if (tabId === tab.id && info.status === 'complete') {
+    const listener = (tid: number, info: chrome.tabs.TabChangeInfo) => {
+      if (tid === tabId && info.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    // Timeout after 30s
     setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
       resolve();
     }, 30000);
   });
 
-  const updated = await chrome.tabs.get(tab.id!);
+  const updated = await chrome.tabs.get(tabId);
   return { url: updated.url, title: updated.title };
 }
 
-async function handleSnapshot(): Promise<unknown> {
-  const tab = await getActiveTab();
+async function handleSnapshot(tabId: number): Promise<unknown> {
+  const tab = await chrome.tabs.get(tabId);
 
   // Get accessibility tree via debugger
   try {
-    await ensureDebuggerAttached(tab.id!);
-    const result = await sendDebuggerCommand(tab.id!, 'Accessibility.getFullAXTree') as {
+    await ensureDebuggerAttached(tabId);
+    const result = await sendDebuggerCommand(tabId, 'Accessibility.getFullAXTree') as {
       nodes?: Array<{ role?: { value: string }; name?: { value: string }; nodeId?: string; childIds?: string[] }>;
     };
 
     if (result?.nodes) {
-      // Build a simplified text representation
       const lines: string[] = [];
       const nodeMap = new Map<string, typeof result.nodes[0]>();
       for (const node of result.nodes) {
@@ -129,7 +121,7 @@ async function handleSnapshot(): Promise<unknown> {
 
   // Fallback: get DOM structure via scripting
   const [injection] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id! },
+    target: { tabId },
     func: () => {
       function walk(el: Element, depth: number, maxDepth: number): string {
         if (depth > maxDepth) return '';
@@ -160,18 +152,25 @@ async function handleSnapshot(): Promise<unknown> {
   };
 }
 
-async function handleScreenshot(): Promise<unknown> {
-  const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
-  return { dataUrl };
+async function handleScreenshot(tabId: number): Promise<unknown> {
+  // Use debugger to capture screenshot — works even when tab is not active
+  try {
+    await ensureDebuggerAttached(tabId);
+    const result = await sendDebuggerCommand(tabId, 'Page.captureScreenshot', { format: 'png' }) as { data: string };
+    return { dataUrl: `data:image/png;base64,${result.data}` };
+  } catch {
+    // Fallback: captureVisibleTab (only works if tab is visible)
+    const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
+    return { dataUrl };
+  }
 }
 
-async function handleClick(params: Record<string, unknown>): Promise<unknown> {
+async function handleClick(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const selector = params.selector as string;
   const xpath = params.xpath as string;
 
-  const tab = await getActiveTab();
   const [result] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id! },
+    target: { tabId },
     func: (sel: string, xp: string) => {
       let el: Element | null = null;
       if (sel) {
@@ -195,37 +194,36 @@ async function handleClick(params: Record<string, unknown>): Promise<unknown> {
   return result?.result ?? { error: 'Script execution failed' };
 }
 
-async function handleEvaluate(params: Record<string, unknown>): Promise<unknown> {
+async function handleEvaluate(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const expression = params.expression as string;
   if (!expression) throw new Error('expression is required');
 
-  const tab = await getActiveTab();
-  await ensureDebuggerAttached(tab.id!);
-  const result = await sendDebuggerCommand(tab.id!, 'Runtime.evaluate', {
+  await ensureDebuggerAttached(tabId);
+  const result = await sendDebuggerCommand(tabId, 'Runtime.evaluate', {
     expression,
     returnByValue: true,
   });
   return result;
 }
 
-export async function handleBrowserRequest(request: BrowserRequest): Promise<BrowserResponse> {
+export async function handleBrowserRequest(request: BrowserRequest, targetTabId: number): Promise<BrowserResponse> {
   try {
     let result: unknown;
     switch (request.action) {
       case 'navigate':
-        result = await handleNavigate(request.params);
+        result = await handleNavigate(targetTabId, request.params);
         break;
       case 'snapshot':
-        result = await handleSnapshot();
+        result = await handleSnapshot(targetTabId);
         break;
       case 'screenshot':
-        result = await handleScreenshot();
+        result = await handleScreenshot(targetTabId);
         break;
       case 'click':
-        result = await handleClick(request.params);
+        result = await handleClick(targetTabId, request.params);
         break;
       case 'evaluate':
-        result = await handleEvaluate(request.params);
+        result = await handleEvaluate(targetTabId, request.params);
         break;
       default:
         throw new Error(`Unknown action: ${request.action}`);

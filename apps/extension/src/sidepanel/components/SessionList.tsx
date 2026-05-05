@@ -10,11 +10,14 @@ export function SessionList({ send }: Props) {
   const [collapsed, setCollapsed] = useState(true);
   const sessions = useChatStore((s) => s.sessions);
   const activeSessionId = useChatStore((s) => s.activeSessionId);
-  const setActiveSession = useChatStore((s) => s.setActiveSession);
+  const selectSession = useChatStore((s) => s.selectSession);
   const handleResume = (id: string) => {
-    setActiveSession(id);
+    if (id === activeSessionId) return;
+    selectSession(id);
     send({ type: 'session:resume', sessionId: id });
   };
+
+  const sorted = [...sessions].sort((a, b) => b.lastModified - a.lastModified);
 
   return (
     <div className="session-list">
@@ -25,20 +28,25 @@ export function SessionList({ send }: Props) {
 
       {!collapsed && (
         <div className="session-list__items">
-          {sessions.map((session) => (
-            <button
-              key={session.id}
-              className={`session-list__item ${session.id === activeSessionId ? 'session-list__item--active' : ''}`}
-              onClick={() => handleResume(session.id)}
-            >
-              <span className="session-list__title" title={session.title}>
-                {(session.title || 'Untitled').slice(0, 60)}
-              </span>
-              <span className="session-list__date">
-                {new Date(session.lastModified).toLocaleDateString()}
-              </span>
-            </button>
-          ))}
+          {sorted.map((session) => {
+            const d = new Date(session.lastModified);
+            const date = d.toLocaleDateString();
+            const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return (
+              <button
+                key={session.id}
+                className={`session-list__item ${session.id === activeSessionId ? 'session-list__item--active' : ''}`}
+                onClick={() => handleResume(session.id)}
+              >
+                <span className="session-list__title" title={session.title}>
+                  {(session.title || 'Untitled').slice(0, 60)}
+                </span>
+                <span className="session-list__date">
+                  {date} {time}
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

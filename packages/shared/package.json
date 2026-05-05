@@ -2,6 +2,14 @@
   "name": "@claude-code-browser/shared",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Corneliu Maftuleac",
+    "url": "https://x.com/cmaftuleac"
+  },
+  "contributors": [
+    "Fineguide.AI (https://fineguide.ai)"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

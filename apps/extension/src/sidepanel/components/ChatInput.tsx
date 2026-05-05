@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
 import { useChatStore } from '../stores/chat-store';
+import { useConnectionStore } from '../stores/connection-store';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import type { SlashCommand } from './SlashCommandMenu';
@@ -79,6 +80,8 @@ export function ChatInput({ send }: Props) {
   useEffect(() => {
     if (pendingAnchors.length > lastAnchorCountRef.current) {
       insertChipAtCursor(pendingAnchors[pendingAnchors.length - 1]);
+      // Ensure editor gets focus after element selection (side panel may have lost focus)
+      setTimeout(() => editorRef.current?.focus(), 50);
     }
     lastAnchorCountRef.current = pendingAnchors.length;
   }, [pendingAnchors]);
@@ -158,17 +161,23 @@ export function ChatInput({ send }: Props) {
     } else {
       // Send immediately
       addUserMessage(message, anchors, imgs);
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const tid = useConnectionStore.getState().targetTabId;
+      const sendMsg = (url: string) => {
         send({
           type: 'chat:send',
           sessionId: activeSessionId ?? undefined,
           message,
           anchors,
           images: imgs,
-          url: tabs[0]?.url ?? '',
+          url,
           sources: sourcePaths.length > 0 ? sourcePaths : undefined,
         });
-      });
+      };
+      if (tid) {
+        chrome.tabs.get(tid, (tab) => sendMsg(chrome.runtime.lastError ? '' : tab?.url ?? ''));
+      } else {
+        sendMsg('');
+      }
       setAgentRunning(true);
     }
 
@@ -180,16 +189,11 @@ export function ChatInput({ send }: Props) {
   }, [pendingAnchors, images, isAgentRunning, editingQueueId, enqueueMessage, updateQueueItem, setEditingQueueId, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
 
   const handleStop = useCallback(() => {
-    if (activeSessionId) {
-      send({ type: 'agent:interrupt', sessionId: activeSessionId });
-    }
-    // Fallback: if the host doesn't respond within 3s, force stop
-    setTimeout(() => {
-      if (useChatStore.getState().isAgentRunning) {
-        useChatStore.getState().setAgentRunning(false);
-      }
-    }, 3000);
-  }, [activeSessionId, send]);
+    // Send interrupt for active session, or empty string to abort current query
+    send({ type: 'agent:interrupt', sessionId: activeSessionId ?? '' });
+    // Immediately hide stop button — host will confirm with chat:error
+    setAgentRunning(false);
+  }, [activeSessionId, send, setAgentRunning]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (showSlashMenu) return;

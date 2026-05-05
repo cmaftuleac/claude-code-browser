@@ -2,6 +2,11 @@ const HOST_NAME = 'com.claude_code_browser';
 let nativePort: chrome.runtime.Port | null = null;
 let sidePanelPort: chrome.runtime.Port | null = null;
 let nativeMessages: unknown[] = []; // Buffer messages before sidepanel connects
+let targetTabId: number | null = null;
+
+// ── Disable side panel globally on startup ─────────────────────────────────
+
+chrome.sidePanel.setOptions({ enabled: false });
 
 // ── Native Host Connection ──────────────────────────────────────────────────
 
@@ -54,6 +59,71 @@ function notifySidePanel(msg: unknown) {
   }
 }
 
+// ── Helper: send target tab info to side panel ─────────────────────────────
+
+function sendTargetTabInfo() {
+  if (!sidePanelPort || targetTabId == null) return;
+  chrome.tabs.get(targetTabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) return;
+    try {
+      sidePanelPort?.postMessage({
+        type: '_target_tab',
+        tabId: tab.id,
+        url: tab.url ?? '',
+        title: tab.title ?? '',
+      });
+    } catch { /* side panel closed */ }
+  });
+}
+
+// ── Helper: send message to target tab's content script ────────────────────
+
+function sendToTargetTab(
+  message: unknown,
+  callback?: (response: unknown) => void,
+) {
+  if (targetTabId == null) {
+    callback?.(null);
+    return;
+  }
+  const tabId = targetTabId;
+
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) {
+      callback?.(null);
+      return;
+    }
+    const url = tab.url ?? '';
+    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
+      callback?.(null);
+      return;
+    }
+
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        // Content script not injected — inject it now, then retry
+        chrome.scripting.executeScript(
+          { target: { tabId }, files: ['content-script.js'] },
+          () => {
+            void chrome.runtime.lastError;
+            chrome.scripting.insertCSS(
+              { target: { tabId }, files: ['element-picker.css'] },
+              () => {
+                void chrome.runtime.lastError;
+                chrome.tabs.sendMessage(tabId, message, (retryResponse) => {
+                  callback?.(chrome.runtime.lastError ? null : retryResponse);
+                });
+              },
+            );
+          },
+        );
+        return;
+      }
+      callback?.(response);
+    });
+  });
+}
+
 // ── Side Panel Connection ───────────────────────────────────────────────────
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -64,6 +134,9 @@ chrome.runtime.onConnect.addListener((port) => {
     if (nativePort) {
       port.postMessage({ type: 'connection:ready', serverVersion: '0.1.0' });
     }
+
+    // Send target tab info
+    sendTargetTabInfo();
 
     // Flush any buffered messages
     for (const msg of nativeMessages) {
@@ -93,43 +166,48 @@ chrome.runtime.onConnect.addListener((port) => {
   }
 });
 
-// ── Extension Action ────────────────────────────────────────────────────────
+// ── Extension Action — open side panel scoped to clicked tab ───────────────
 
 chrome.action.onClicked.addListener((tab) => {
-  if (tab.id != null) {
-    chrome.sidePanel.open({ tabId: tab.id });
+  if (tab.id == null) return;
+
+  const oldTabId = targetTabId;
+  targetTabId = tab.id;
+
+  // Enable on new tab and open — must be synchronous from the gesture
+  chrome.sidePanel.setOptions({ tabId: tab.id, path: 'sidepanel.html', enabled: true }, () => {
+    chrome.sidePanel.open({ tabId: tab.id! });
+    sendTargetTabInfo();
+  });
+
+  // Disable on old target tab (non-blocking)
+  if (oldTabId != null && oldTabId !== tab.id) {
+    chrome.sidePanel.setOptions({ tabId: oldTabId, enabled: false }, () => void chrome.runtime.lastError);
   }
 });
 
-// ── Content Script Message Relay ────────────────────────────────────────────
+// ── Target tab closed ──────────────────────────────────────────────────────
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === targetTabId) {
+    targetTabId = null;
+    notifySidePanel({ type: '_target_tab', tabId: null, url: '', title: '' });
+  }
+});
+
+// ── Target tab navigated — update URL ──────────────────────────────────────
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (tabId === targetTabId && changeInfo.status === 'complete') {
+    sendTargetTabInfo();
+  }
+});
+
+// ── Content Script Message Relay (uses targetTabId) ────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ACTIVATE_PICKER') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id;
-      const url = tabs[0]?.url ?? '';
-      if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) return;
-
-      chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => {
-        if (chrome.runtime.lastError) {
-          // Content script not injected — inject it now, then retry
-          chrome.scripting.executeScript(
-            { target: { tabId }, files: ['content-script.js'] },
-            () => {
-              void chrome.runtime.lastError;
-              chrome.scripting.insertCSS(
-                { target: { tabId }, files: ['element-picker.css'] },
-                () => {
-                  void chrome.runtime.lastError;
-                  // Retry after injection
-                  chrome.tabs.sendMessage(tabId, { type: 'ACTIVATE_PICKER' }, () => void chrome.runtime.lastError);
-                },
-              );
-            },
-          );
-        }
-      });
-    });
+    sendToTargetTab({ type: 'ACTIVATE_PICKER' });
     return;
   }
 
@@ -139,30 +217,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     message.type === 'HIGHLIGHT_ELEMENT' ||
     message.type === 'REMOVE_HIGHLIGHT'
   ) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tabId = tabs[0]?.id;
-      const url = tabs[0]?.url ?? '';
-      if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-        sendResponse(null);
-        return;
-      }
-      chrome.tabs.sendMessage(tabId, message, (response) => {
-        if (chrome.runtime.lastError) {
-          // Content script not injected — inject and retry
-          chrome.scripting.executeScript(
-            { target: { tabId }, files: ['content-script.js'] },
-            () => {
-              void chrome.runtime.lastError;
-              chrome.scripting.insertCSS({ target: { tabId }, files: ['element-picker.css'] }, () => void chrome.runtime.lastError);
-              chrome.tabs.sendMessage(tabId, message, (retryResponse) => {
-                sendResponse(chrome.runtime.lastError ? null : retryResponse);
-              });
-            },
-          );
-          return;
-        }
-        sendResponse(response);
-      });
+    sendToTargetTab(message, (response) => {
+      sendResponse(response);
     });
     return true;
   }

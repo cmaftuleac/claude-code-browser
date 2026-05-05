@@ -17,6 +17,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     } else {
       activatePicker();
     }
+    sendResponse({ ok: true });
+    return;
   }
 
   if (message.type === 'GET_DOM_TREE') {
