@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from 'react';
 
 export function SetupScreen() {
-  const [extensionId] = useState(() => chrome.runtime.id);
   const [copied, setCopied] = useState(false);
 
-  const installCmd = `npx claude-code-browser install ${extensionId}`;
+  // No ID needed — installer auto-detects all loaded Claude Code Browser
+  // extensions and registers them all in allowed_origins.
+  const installCmd = 'npx claude-code-browser install';
 
   const copy = useCallback(() => {
     navigator.clipboard.writeText(installCmd).then(() => {
