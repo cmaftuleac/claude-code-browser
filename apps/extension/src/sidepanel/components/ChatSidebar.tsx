@@ -2,7 +2,6 @@ import React from 'react';
 import type { ClientMessage } from '@claude-code-browser/shared';
 import { useChatStore } from '../stores/chat-store';
 import { MessageList } from './MessageList';
-import { MessageQueue } from './MessageQueue';
 import { ChatInput } from './ChatInput';
 import { ReviewPrompt } from './ReviewPrompt';
 
@@ -21,7 +20,6 @@ export function ChatSidebar({ send }: Props) {
         <div className="chat-sidebar__session-title">{session.title}</div>
       )}
       <MessageList />
-      <MessageQueue />
       <ReviewPrompt />
       <ChatInput send={send} />
     </div>

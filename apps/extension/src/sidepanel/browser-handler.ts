@@ -160,7 +160,7 @@ async function handleScreenshot(tabId: number): Promise<unknown> {
     return { dataUrl: `data:image/png;base64,${result.data}` };
   } catch {
     // Fallback: captureVisibleTab (only works if tab is visible)
-    const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
+    const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
     return { dataUrl };
   }
 }

@@ -146,10 +146,13 @@ let sessionStore: import('./session-store.js').SessionStore | null = null;
 async function getAgentManager() {
   if (!agentManager) {
     const { AgentManager } = await import('./agent-manager.js');
-    agentManager = new AgentManager((requestId, action, params) => {
-      // Relay browser request from MCP server process to Chrome extension
-      send({ type: 'browser:request', requestId, action: action as any, params });
-    });
+    agentManager = new AgentManager(
+      send,
+      (requestId, action, params) => {
+        // Relay browser request from MCP server process to Chrome extension
+        send({ type: 'browser:request', requestId, action: action as any, params });
+      },
+    );
   }
   return agentManager;
 }
@@ -205,45 +208,16 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
 
     case 'chat:send': {
       const am = await getAgentManager();
-      const messageId = crypto.randomUUID();
-      let resolvedSid = msg.sessionId ?? '';
-
-      send({ type: 'agent:status', sessionId: resolvedSid, status: 'running' });
-
-      await am.sendMessage(
-        {
-          message: msg.message,
-          sessionId: msg.sessionId,
-          anchors: msg.anchors,
-          images: msg.images,
-          url: msg.url,
-          projectDir: msg.projectDir,
-          sources: msg.sources,
-        },
-        {
-          onSessionId: (sessionId) => {
-            resolvedSid = sessionId;
-            send({ type: 'session:created', sessionId });
-          },
-          onStream: (delta) => {
-            send({ type: 'chat:stream', sessionId: resolvedSid, delta, messageId, kind: 'text' });
-          },
-          onThinking: (delta, thinkingMessageId) => {
-            send({ type: 'chat:stream', sessionId: resolvedSid, delta, messageId: thinkingMessageId, kind: 'thinking' });
-          },
-          onToolUse: (toolName, summary) => {
-            send({ type: 'agent:tool_use', sessionId: resolvedSid, toolName, summary });
-          },
-          onComplete: (result, sessionId, costUsd) => {
-            send({ type: 'chat:complete', sessionId, result, messageId, costUsd });
-            send({ type: 'agent:status', sessionId, status: 'idle' });
-          },
-          onError: (error) => {
-            send({ type: 'chat:error', sessionId: resolvedSid, error });
-            send({ type: 'agent:status', sessionId: resolvedSid, status: 'error' });
-          },
-        },
-      );
+      send({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'running' });
+      am.sendMessage({
+        message: msg.message,
+        sessionId: msg.sessionId,
+        anchors: msg.anchors,
+        images: msg.images,
+        url: msg.url,
+        projectDir: msg.projectDir,
+        sources: msg.sources,
+      }).catch((err) => log('sendMessage error:', err instanceof Error ? err.message : String(err)));
       break;
     }
 

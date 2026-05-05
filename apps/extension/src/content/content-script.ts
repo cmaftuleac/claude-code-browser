@@ -258,7 +258,7 @@ function buildCssSelector(el: Element): string {
   let current: Element | null = el;
   while (current && current !== document.documentElement && current !== document.body) {
     const tag = current.tagName.toLowerCase();
-    const parent = current.parentElement;
+    const parent: HTMLElement | null = current.parentElement;
     if (!parent) { parts.unshift(tag); break; }
     if (current.id) { parts.unshift(`#${CSS.escape(current.id)}`); break; }
     const sameTag = Array.from(parent.children).filter((c) => c.tagName === current!.tagName);
@@ -386,7 +386,7 @@ function computeElementPath(el: Element): string {
   const parts: number[] = [];
   let current: Element | null = el;
   while (current && current !== document.body) {
-    const parent = current.parentElement;
+    const parent: HTMLElement | null = current.parentElement;
     if (!parent) break;
     const siblings = Array.from(parent.children).filter(
       (child) => !SKIP_TAGS.has(child.tagName.toLowerCase())
@@ -405,7 +405,7 @@ function buildXPath(el: Element): string {
   let current: Element | null = el;
   while (current && current.nodeType === Node.ELEMENT_NODE) {
     const tag = current.tagName.toLowerCase();
-    const parent = current.parentElement;
+    const parent: HTMLElement | null = current.parentElement;
     if (!parent) { parts.unshift(`/${tag}`); break; }
     if (current.id) { parts.unshift(`//${tag}[@id="${current.id}"]`); break; }
     const siblings = Array.from(parent.children).filter((c) => c.tagName === current!.tagName);

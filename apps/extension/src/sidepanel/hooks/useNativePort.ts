@@ -33,31 +33,6 @@ function isForActiveSession(msgSessionId?: string): boolean {
   return msgSessionId === active;
 }
 
-function sendNextFromQueue(send: (msg: ClientMessage) => void) {
-  const store = useChatStore.getState();
-  const next = store.dequeueMessage();
-  if (!next) return;
-
-  store.addUserMessage(next.content, next.anchors, next.images);
-  store.setAgentRunning(true);
-
-  getTargetTabInfo((url, domain) => {
-    chrome.storage.local.get(`ccb-sources-${domain}`, (result) => {
-      const sources = result[`ccb-sources-${domain}`] as string[] | undefined;
-      const sessionId = useChatStore.getState().activeSessionId;
-      send({
-        type: 'chat:send',
-        sessionId: sessionId ?? undefined,
-        message: next.content,
-        anchors: next.anchors,
-        images: next.images,
-        url,
-        sources: sources?.length ? sources : undefined,
-      });
-    });
-  });
-}
-
 /**
  * Connects to the native host via the service worker.
  * Side panel ↔ service worker (chrome.runtime.connect) ↔ native host (connectNative).
@@ -80,7 +55,12 @@ export function useNativePort() {
     const port = chrome.runtime.connect({ name: 'sidepanel' });
     portRef.current = port;
 
-    port.onMessage.addListener((msg: ServerMessage & { type: string; connected?: boolean; error?: string }) => {
+    type InternalMessage =
+      | { type: '_native_status'; connected?: boolean; error?: string }
+      | { type: '_target_tab'; tabId: number | null; url?: string };
+    type IncomingMessage = ServerMessage | InternalMessage;
+
+    port.onMessage.addListener((msg: IncomingMessage) => {
       const store = useChatStore.getState();
 
       // Internal status messages from service worker
@@ -89,15 +69,14 @@ export function useNativePort() {
           // Native host connected but we wait for connection:ready
         } else {
           setStatus('disconnected');
+          // Native host died — agent state is gone with it.
+          useChatStore.getState().setAgentRunning(false);
         }
         return;
       }
 
       if (msg.type === '_target_tab') {
-        useConnectionStore.getState().setTargetTab(
-          (msg as { tabId: number | null }).tabId,
-          (msg as { url?: string }).url,
-        );
+        useConnectionStore.getState().setTargetTab(msg.tabId, msg.url);
         return;
       }
 
@@ -105,20 +84,6 @@ export function useNativePort() {
         case 'connection:ready': {
           setStatus('connected');
           send({ type: 'session:list' });
-
-          // Auto-resume: if we were running when disconnected, resend the last user message
-          const currentStore = useChatStore.getState();
-          if (currentStore.isAgentRunning) {
-            const lastUserMsg = [...currentStore.messages].reverse().find((m) => m.role === 'user');
-            if (lastUserMsg && currentStore.activeSessionId) {
-              send({
-                type: 'chat:send',
-                sessionId: currentStore.activeSessionId,
-                message: lastUserMsg.content,
-                url: '',
-              });
-            }
-          }
           break;
         }
 
@@ -252,8 +217,6 @@ export function useNativePort() {
           store.setAgentRunning(false);
           // Refresh session list (title may have been generated)
           send({ type: 'session:list' });
-          // Auto-send next queued message
-          setTimeout(() => sendNextFromQueue(send), 100);
           break;
 
         case 'chat:error': {
@@ -286,10 +249,6 @@ export function useNativePort() {
             });
           }
           store.setAgentRunning(false);
-          // Auto-send next from queue, but NOT after user-initiated interrupt
-          if (!isInterrupt) {
-            setTimeout(() => sendNextFromQueue(send), 100);
-          }
           break;
         }
 
@@ -335,6 +294,8 @@ export function useNativePort() {
       console.error('[CCB] Service worker port disconnected');
       portRef.current = null;
       setStatus('disconnected');
+      // Clear running state so the input box leaves stop-button mode while we reconnect.
+      useChatStore.getState().setAgentRunning(false);
       // Reconnect after a short delay
       setTimeout(connect, 2000);
     });

@@ -1,9 +1,12 @@
 /**
- * Core orchestration — bridges user messages to the Claude Agent SDK.
+ * Core orchestration — bridges user messages to the Claude Agent SDK using
+ * streaming-input mode. One long-lived Query per session lets new user
+ * messages be injected mid-turn without interrupting the agent.
  */
 
 import { query, renameSession } from '@anthropic-ai/claude-agent-sdk';
-import type { ElementAnchor } from '@claude-code-browser/shared';
+import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { ElementAnchor, ServerMessage } from '@claude-code-browser/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -37,15 +40,6 @@ export interface SendMessageParams {
   sources?: string[];
 }
 
-export interface StreamCallbacks {
-  onSessionId: (sessionId: string) => void;
-  onStream: (delta: string, messageId: string) => void;
-  onThinking: (delta: string, messageId: string) => void;
-  onToolUse: (toolName: string, summary: string) => void;
-  onComplete: (result: string, sessionId: string, costUsd?: number) => void;
-  onError: (error: string) => void;
-}
-
 function formatToolDetail(name: string, rawInput: string): string {
   try {
     const input = JSON.parse(rawInput) as Record<string, unknown>;
@@ -68,16 +62,74 @@ function formatToolDetail(name: string, rawInput: string): string {
   }
 }
 
+/**
+ * Push-based AsyncIterable used as the streaming-input prompt for query().
+ * Resolves pending next() calls when push() is called; closes cleanly on end().
+ */
+class AsyncMessagePump<T> implements AsyncIterable<T> {
+  private buffer: T[] = [];
+  private resolvers: Array<(r: IteratorResult<T>) => void> = [];
+  private closed = false;
+
+  push(value: T): void {
+    if (this.closed) return;
+    const r = this.resolvers.shift();
+    if (r) r({ value, done: false });
+    else this.buffer.push(value);
+  }
+
+  end(): void {
+    if (this.closed) return;
+    this.closed = true;
+    while (this.resolvers.length > 0) {
+      this.resolvers.shift()!({ value: undefined as unknown as T, done: true });
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: (): Promise<IteratorResult<T>> => {
+        if (this.buffer.length > 0) {
+          return Promise.resolve({ value: this.buffer.shift()!, done: false });
+        }
+        if (this.closed) {
+          return Promise.resolve({ value: undefined as unknown as T, done: true });
+        }
+        return new Promise<IteratorResult<T>>((resolve) => this.resolvers.push(resolve));
+      },
+      return: (): Promise<IteratorResult<T>> => {
+        this.end();
+        return Promise.resolve({ value: undefined as unknown as T, done: true });
+      },
+    };
+  }
+}
+
+interface LiveSession {
+  /** Empty until the SDK reports session_id on the first frame */
+  sessionId: string;
+  pump: AsyncMessagePump<SDKUserMessage>;
+  query: Query;
+  abort: AbortController;
+  cwd: string;
+  /** Set once for brand-new sessions so we can renameSession after init */
+  pendingTitle: string;
+}
+
 export class AgentManager {
   private ipcServer: NetServer | null = null;
   private ipcPort = 0;
   private ipcClients = new Set<Socket>();
   private projectDir: string | undefined;
-  private activeAbortControllers = new Map<string, AbortController>();
-  private currentAbortController: AbortController | null = null;
+  private liveSessions = new Map<string, LiveSession>();
+  /** Sessions whose canonical sessionId is not yet known (first frame pending) */
+  private pendingLiveSessions = new Set<LiveSession>();
   private browserCliPath: string;
 
-  constructor(private onBrowserRequest: (requestId: string, action: string, params: Record<string, unknown>) => void) {
+  constructor(
+    private send: (msg: ServerMessage) => void,
+    private onBrowserRequest: (requestId: string, action: string, params: Record<string, unknown>) => void,
+  ) {
     const __dirname = dirname(fileURLToPath(import.meta.url));
     this.browserCliPath = join(__dirname, 'browser-cli.js');
     this.startIpcServer();
@@ -106,7 +158,6 @@ export class AgentManager {
       const addr = this.ipcServer!.address();
       this.ipcPort = typeof addr === 'object' && addr ? addr.port : 0;
       log('IPC server listening on port', this.ipcPort);
-      // Write port to well-known file so browser-cli can find it (survives session resume)
       const portFile = join(tmpdir(), 'ccb-ipc-port');
       writeFile(portFile, String(this.ipcPort)).catch(() => {});
     });
@@ -145,12 +196,8 @@ CRITICAL RULES:
 - Always confirm before making destructive changes to source files.`;
   }
 
-  async sendMessage(params: SendMessageParams, callbacks: StreamCallbacks): Promise<void> {
-    // Capture the user's clean text before image-attachment lines get appended below.
-    // Used to set a stable customTitle on brand-new sessions.
-    const isNewSession = !params.sessionId;
-    const userTitleText = params.message.trim().slice(0, 80);
-
+  async sendMessage(params: SendMessageParams): Promise<void> {
+    // Save attached images to disk and append paths to the user message.
     if (params.images && params.images.length > 0) {
       const imgDir = join(tmpdir(), 'ccb-images');
       await mkdir(imgDir, { recursive: true });
@@ -169,54 +216,94 @@ CRITICAL RULES:
       }
     }
 
-    const prompt = this.buildPrompt(params);
+    const userText = this.buildPrompt(params);
+
+    // Find or create a LiveSession for this conversation.
+    let live: LiveSession | null = params.sessionId ? this.liveSessions.get(params.sessionId) ?? null : null;
+    if (!live) {
+      live = this.createLiveSession(params);
+    }
+
+    const sdkMsg: SDKUserMessage = {
+      type: 'user',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: userText },
+    };
+    live.pump.push(sdkMsg);
+  }
+
+  private createLiveSession(params: SendMessageParams): LiveSession {
     const cwd = params.projectDir ?? this.projectDir ?? params.sources?.[0] ?? process.cwd();
     const abortController = new AbortController();
-    this.currentAbortController = abortController;
+    const pump = new AsyncMessagePump<SDKUserMessage>();
+    const isNewSession = !params.sessionId;
+    const pendingTitle = isNewSession ? params.message.trim().slice(0, 80) : '';
 
-    let sessionId = params.sessionId ?? '';
+    const q = query({
+      prompt: pump,
+      options: {
+        allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
+        permissionMode: 'bypassPermissions',
+        spawnClaudeCodeProcess: (options) => {
+          const cliJs = findClaudeCliJs();
+          const child = spawn(process.execPath, [cliJs, ...options.args], {
+            cwd: options.cwd,
+            env: options.env,
+            signal: options.signal,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          });
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return child as any;
+        },
+        systemPrompt: this.buildSystemPrompt(params.url),
+        includePartialMessages: true,
+        cwd,
+        additionalDirectories: params.sources,
+        abortController,
+        ...(params.sessionId && { resume: params.sessionId }),
+      },
+    });
+
+    const live: LiveSession = {
+      sessionId: params.sessionId ?? '',
+      pump,
+      query: q,
+      abort: abortController,
+      cwd,
+      pendingTitle,
+    };
+
+    if (params.sessionId) this.liveSessions.set(params.sessionId, live);
+    else this.pendingLiveSessions.add(live);
+
+    this.runConsumer(live).catch((err) => log('Consumer error:', err instanceof Error ? err.message : String(err)));
+    return live;
+  }
+
+  private async runConsumer(live: LiveSession): Promise<void> {
     let currentToolName = '';
     let currentToolInput = '';
     let insideXmlToolBlock = false;
 
     try {
-      const q = query({
-        prompt,
-        options: {
-          allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
-          permissionMode: 'bypassPermissions',
-          spawnClaudeCodeProcess: (options) => {
-            const cliJs = findClaudeCliJs();
-            const child = spawn(process.execPath, [cliJs, ...options.args], {
-              cwd: options.cwd,
-              env: options.env,
-              signal: options.signal,
-              stdio: ['pipe', 'pipe', 'pipe'],
-            });
-            return child as any;
-          },
-          systemPrompt: this.buildSystemPrompt(params.url),
-          includePartialMessages: true,
-          cwd,
-          additionalDirectories: params.sources,
-          abortController,
-          ...(params.sessionId && { resume: params.sessionId }),
-        },
-      });
-
-      for await (const message of q) {
-        if (!sessionId && 'session_id' in message && message.session_id) {
-          sessionId = message.session_id as string;
-          this.activeAbortControllers.set(sessionId, abortController);
-          callbacks.onSessionId(sessionId);
-          // For brand-new sessions, set a customTitle from the user's clean text so
-          // the session list shows a meaningful, distinct title regardless of prompt prefix.
-          if (isNewSession && userTitleText) {
-            renameSession(sessionId, userTitleText).catch((err) => {
+      for await (const message of live.query) {
+        // Resolve canonical sessionId on first frame that carries it.
+        if (!live.sessionId && 'session_id' in message && message.session_id) {
+          const sid = message.session_id as string;
+          live.sessionId = sid;
+          this.pendingLiveSessions.delete(live);
+          this.liveSessions.set(sid, live);
+          this.send({ type: 'session:created', sessionId: sid });
+          if (live.pendingTitle) {
+            const title = live.pendingTitle;
+            live.pendingTitle = '';
+            renameSession(sid, title).catch((err) => {
               log('renameSession failed:', err instanceof Error ? err.message : String(err));
             });
           }
         }
+
+        const sid = live.sessionId;
 
         switch (message.type) {
           case 'stream_event': {
@@ -230,12 +317,12 @@ CRITICAL RULES:
               if (event.content_block?.type === 'tool_use' && event.content_block.name) {
                 currentToolName = event.content_block.name;
                 currentToolInput = '';
-                callbacks.onToolUse(currentToolName, currentToolName);
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: currentToolName, summary: currentToolName });
               }
             }
             if (event.type === 'content_block_delta') {
               if (event.delta?.type === 'thinking_delta' && event.delta.thinking) {
-                callbacks.onThinking(event.delta.thinking, message.uuid);
+                this.send({ type: 'chat:stream', sessionId: sid, delta: event.delta.thinking, messageId: message.uuid, kind: 'thinking' });
               }
               if (event.delta?.type === 'text_delta' && event.delta.text) {
                 const text = event.delta.text;
@@ -253,17 +340,16 @@ CRITICAL RULES:
                 if (/<\/?(?:invoke|antml:invoke|antml:parameter)[\s>]/.test(text)) break;
                 if (/<parameter\s+name=/.test(text)) break;
                 if (/^\s*<\/(?:parameter|invoke|function_calls)>\s*$/.test(text)) break;
-                callbacks.onStream(text, message.uuid);
+                this.send({ type: 'chat:stream', sessionId: sid, delta: text, messageId: message.uuid, kind: 'text' });
               }
               if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
                 currentToolInput += event.delta.partial_json;
               }
             }
             if (event.type === 'content_block_stop' && currentToolName) {
-              // Parse accumulated input and build a detail string
               const detail = formatToolDetail(currentToolName, currentToolInput);
               if (detail) {
-                callbacks.onToolUse('_update_', detail);
+                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary: detail });
               }
               currentToolName = '';
               currentToolInput = '';
@@ -272,49 +358,64 @@ CRITICAL RULES:
           }
           case 'tool_use_summary': {
             const summary = (message as { summary: string }).summary;
-            callbacks.onToolUse('_update_', summary);
+            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary });
             break;
           }
           case 'result': {
             const r = message as Record<string, unknown>;
-            const sid = (r.session_id as string) || sessionId;
+            const turnSid = (r.session_id as string) || sid;
+            const turnMessageId = (r.uuid as string) || crypto.randomUUID();
             if (r.subtype === 'success') {
-              callbacks.onComplete(r.result as string, sid, r.total_cost_usd as number | undefined);
+              this.send({
+                type: 'chat:complete',
+                sessionId: turnSid,
+                result: r.result as string,
+                messageId: turnMessageId,
+                costUsd: r.total_cost_usd as number | undefined,
+              });
+              this.send({ type: 'agent:status', sessionId: turnSid, status: 'idle' });
             } else {
-              callbacks.onError((r.error as string) || 'Agent returned an error');
+              this.send({ type: 'chat:error', sessionId: turnSid, error: (r.error as string) || 'Agent returned an error' });
+              this.send({ type: 'agent:status', sessionId: turnSid, status: 'error' });
             }
             break;
           }
         }
       }
     } catch (err: unknown) {
-      if (abortController.signal.aborted) {
-        callbacks.onError('Query interrupted by user');
+      const sid = live.sessionId;
+      if (live.abort.signal.aborted) {
+        this.send({ type: 'chat:error', sessionId: sid, error: 'Query interrupted by user' });
       } else {
-        callbacks.onError(err instanceof Error ? err.message : String(err));
+        this.send({ type: 'chat:error', sessionId: sid, error: err instanceof Error ? err.message : String(err) });
       }
+      this.send({ type: 'agent:status', sessionId: sid, status: 'error' });
     } finally {
-      if (sessionId) this.activeAbortControllers.delete(sessionId);
-      this.currentAbortController = null;
+      if (live.sessionId) this.liveSessions.delete(live.sessionId);
+      this.pendingLiveSessions.delete(live);
+      try { live.query.close(); } catch { /* ignore */ }
     }
   }
 
   interruptSession(sessionId: string): boolean {
-    // Try by session ID first
-    const c = this.activeAbortControllers.get(sessionId);
-    if (c) {
+    const live = this.liveSessions.get(sessionId);
+    if (live) {
       log('Interrupting session:', sessionId);
-      c.abort();
-      this.activeAbortControllers.delete(sessionId);
+      live.query.interrupt().catch((err) => {
+        log('interrupt() failed, falling back to abort:', err instanceof Error ? err.message : String(err));
+        try { live.abort.abort(); } catch { /* ignore */ }
+      });
       return true;
     }
-    // Fallback: abort whatever is currently running
-    if (this.currentAbortController && !this.currentAbortController.signal.aborted) {
-      log('Interrupting current query (session ID mismatch, requested:', sessionId, ')');
-      this.currentAbortController.abort();
+    // Fallback for the rare case interrupt arrives before sessionId is resolved.
+    for (const pending of this.pendingLiveSessions) {
+      log('Interrupting pending session (no canonical id yet)');
+      pending.query.interrupt().catch(() => {
+        try { pending.abort.abort(); } catch { /* ignore */ }
+      });
       return true;
     }
-    log('No active query to interrupt for session:', sessionId);
+    log('No active session to interrupt for:', sessionId);
     return false;
   }
 
