@@ -20,20 +20,12 @@ export interface ChatMessage {
   kind?: 'text' | 'thinking' | 'tool_use';
 }
 
-export interface QueuedMessage {
-  id: string;
-  content: string;
-  anchors?: ElementAnchor[];
-  images?: string[];
-}
-
 interface ChatState {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   messages: ChatMessage[];
   isAgentRunning: boolean;
   pendingAnchors: ElementAnchor[];
-  messageQueue: QueuedMessage[];
 
   setSessions: (sessions: SessionInfo[]) => void;
   setActiveSession: (id: string | null) => void;
@@ -48,23 +40,14 @@ interface ChatState {
   removeAnchor: (index: number) => void;
   clearAnchors: () => void;
   clearMessages: () => void;
-
-  enqueueMessage: (msg: QueuedMessage) => void;
-  dequeueMessage: () => QueuedMessage | undefined;
-  removeFromQueue: (id: string) => void;
-  updateQueueItem: (id: string, content: string) => void;
-  reorderQueue: (fromIndex: number, toIndex: number) => void;
-  editingQueueId: string | null;
-  setEditingQueueId: (id: string | null) => void;
 }
 
-export const useChatStore = create<ChatState>((set, get) => ({
+export const useChatStore = create<ChatState>((set) => ({
   sessions: [],
   activeSessionId: null,
   messages: [],
   isAgentRunning: false,
   pendingAnchors: [],
-  messageQueue: [],
 
   setSessions: (sessions) => set({ sessions }),
   setActiveSession: (id) => set({ activeSessionId: id }),
@@ -135,37 +118,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({ pendingAnchors: state.pendingAnchors.filter((_, i) => i !== index) })),
 
   clearAnchors: () => set({ pendingAnchors: [] }),
-  clearMessages: () => set({ messages: [], activeSessionId: null, messageQueue: [], editingQueueId: null }),
-
-  // ── Queue ─────────────────────────────────────────────────────────────
-
-  editingQueueId: null,
-  setEditingQueueId: (id) => set({ editingQueueId: id }),
-
-  enqueueMessage: (msg) =>
-    set((state) => ({ messageQueue: [...state.messageQueue, msg] })),
-
-  dequeueMessage: () => {
-    const queue = get().messageQueue;
-    if (queue.length === 0) return undefined;
-    const [next, ...rest] = queue;
-    set({ messageQueue: rest });
-    return next;
-  },
-
-  removeFromQueue: (id) =>
-    set((state) => ({ messageQueue: state.messageQueue.filter((m) => m.id !== id) })),
-
-  updateQueueItem: (id, content) =>
-    set((state) => ({
-      messageQueue: state.messageQueue.map((m) => (m.id === id ? { ...m, content } : m)),
-    })),
-
-  reorderQueue: (fromIndex, toIndex) =>
-    set((state) => {
-      const queue = [...state.messageQueue];
-      const [item] = queue.splice(fromIndex, 1);
-      queue.splice(toIndex, 0, item);
-      return { messageQueue: queue };
-    }),
+  clearMessages: () => set({ messages: [], activeSessionId: null }),
 }));

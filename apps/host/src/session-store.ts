@@ -9,12 +9,24 @@ export class SessionStore {
   async getSessions(): Promise<SessionInfo[]> {
     try {
       const sessions = await listSessions({ limit: 50 });
-      return sessions.map((s) => ({
-        id: s.sessionId,
-        title: s.customTitle || stripPromptPrefix(s.summary).slice(0, 80) || `Session ${s.sessionId.slice(0, 8)}`,
-        lastModified: s.lastModified,
-        cwd: s.cwd,
-      }));
+      return sessions.map((s) => {
+        // Prefer firstPrompt (literal first user message, multi-line preserved) over
+        // summary (often newline-collapsed, which defeats line-based metadata stripping).
+        // Order: user-set title → first prompt → summary → id fallback.
+        const fromFirst = stripPromptPrefix(s.firstPrompt ?? '').slice(0, 80);
+        const fromSummary = stripPromptPrefix(s.summary ?? '').slice(0, 80);
+        const title =
+          s.customTitle ||
+          fromFirst ||
+          fromSummary ||
+          `Session ${s.sessionId.slice(0, 8)}`;
+        return {
+          id: s.sessionId,
+          title,
+          lastModified: s.lastModified,
+          cwd: s.cwd,
+        };
+      });
     } catch (err) {
       return [];
     }

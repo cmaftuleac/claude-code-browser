@@ -35,37 +35,8 @@ export function ChatInput({ send }: Props) {
   const activeSessionId = useChatStore((s) => s.activeSessionId);
   const isAgentRunning = useChatStore((s) => s.isAgentRunning);
   const setAgentRunning = useChatStore((s) => s.setAgentRunning);
-  const enqueueMessage = useChatStore((s) => s.enqueueMessage);
-  const updateQueueItem = useChatStore((s) => s.updateQueueItem);
-  const messageQueue = useChatStore((s) => s.messageQueue);
-  const editingQueueId = useChatStore((s) => s.editingQueueId);
-  const setEditingQueueId = useChatStore((s) => s.setEditingQueueId);
 
-  // Dynamic placeholder
-  const placeholder = editingQueueId
-    ? 'Edit queued message...'
-    : isAgentRunning
-    ? (messageQueue.length > 0 ? 'Queue another message...' : 'Queue a message...')
-    : 'Ask about this page...';
-
-  // When editingQueueId changes, fill editor with that queue item's content
-  useEffect(() => {
-    if (!editingQueueId) return;
-    const item = messageQueue.find((m) => m.id === editingQueueId);
-    if (item && editorRef.current) {
-      editorRef.current.textContent = item.content;
-      editorRef.current.focus();
-      // Move cursor to end
-      const sel = window.getSelection();
-      if (sel) {
-        const r = document.createRange();
-        r.selectNodeContents(editorRef.current);
-        r.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
-    }
-  }, [editingQueueId, messageQueue]);
+  const placeholder = 'Ask about this page...';
 
   // Load slash commands from host
   useEffect(() => {
@@ -151,42 +122,32 @@ export function ChatInput({ send }: Props) {
     const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
     const imgs = images.length > 0 ? [...images] : undefined;
 
-    if (editingQueueId) {
-      // Save back to queue item
-      updateQueueItem(editingQueueId, message);
-      setEditingQueueId(null);
-    } else if (isAgentRunning) {
-      // Queue the message
-      enqueueMessage({ id: `q-${Date.now()}`, content: message, anchors, images: imgs });
+    addUserMessage(message, anchors, imgs);
+    const tid = useConnectionStore.getState().targetTabId;
+    const sendMsg = (url: string) => {
+      send({
+        type: 'chat:send',
+        sessionId: activeSessionId ?? undefined,
+        message,
+        anchors,
+        images: imgs,
+        url,
+        sources: sourcePaths.length > 0 ? sourcePaths : undefined,
+      });
+    };
+    if (tid) {
+      chrome.tabs.get(tid, (tab) => sendMsg(chrome.runtime.lastError ? '' : tab?.url ?? ''));
     } else {
-      // Send immediately
-      addUserMessage(message, anchors, imgs);
-      const tid = useConnectionStore.getState().targetTabId;
-      const sendMsg = (url: string) => {
-        send({
-          type: 'chat:send',
-          sessionId: activeSessionId ?? undefined,
-          message,
-          anchors,
-          images: imgs,
-          url,
-          sources: sourcePaths.length > 0 ? sourcePaths : undefined,
-        });
-      };
-      if (tid) {
-        chrome.tabs.get(tid, (tab) => sendMsg(chrome.runtime.lastError ? '' : tab?.url ?? ''));
-      } else {
-        sendMsg('');
-      }
-      setAgentRunning(true);
+      sendMsg('');
     }
+    setAgentRunning(true);
 
     clearAnchors();
     setImages([]);
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, isAgentRunning, editingQueueId, enqueueMessage, updateQueueItem, setEditingQueueId, addUserMessage, send, activeSessionId, clearAnchors, setAgentRunning]);
+  }, [pendingAnchors, images, addUserMessage, send, activeSessionId, sourcePaths, clearAnchors, setAgentRunning]);
 
   const handleStop = useCallback(() => {
     // Send interrupt for active session, or empty string to abort current query
@@ -316,7 +277,7 @@ export function ChatInput({ send }: Props) {
               {'\u25A0'}
             </button>
           )}
-          <button className="chat-input__send-btn" onClick={handleSend} title={isAgentRunning ? 'Queue message' : 'Send'}>
+          <button className="chat-input__send-btn" onClick={handleSend} title="Send">
             {'\u2191'}
           </button>
         </div>
