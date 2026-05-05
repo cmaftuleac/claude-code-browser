@@ -1,9 +1,10 @@
 /**
  * Custom browser tools that send requests to the Chrome extension
- * via native messaging. No Playwright or MCP server needed.
+ * via native messaging. No Playwright or external MCP server needed.
  */
 
 import { z } from 'zod/v4';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { writeNativeMessage, log } from './native-io.js';
 import type { ServerMessage } from '@claude-code-browser/shared';
 
@@ -49,67 +50,69 @@ function browserRequest(action: string, params: Record<string, unknown> = {}): P
   });
 }
 
-/** Tool definitions for the Agent SDK's `tools` option */
-export function getBrowserToolDefinitions() {
-  return [
-    {
-      name: 'browser_navigate',
-      description: 'Navigate the active browser tab to a URL. Returns the final URL and page title.',
-      inputSchema: { url: z.string().describe('The URL to navigate to') },
-      handler: async (args: { url: string }) => {
-        log('browser_navigate:', args.url);
-        const result = await browserRequest('navigate', { url: args.url });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-      },
+/** Register browser tools on an MCP server instance */
+export function registerBrowserTools(server: McpServer): void {
+  server.tool(
+    'browser_navigate',
+    'Navigate the active browser tab to a URL. Returns the final URL and page title.',
+    { url: z.string().describe('The URL to navigate to') },
+    async ({ url }) => {
+      log('browser_navigate:', url);
+      const result = await browserRequest('navigate', { url });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
-    {
-      name: 'browser_snapshot',
-      description: 'Get a structural snapshot of the current page — accessibility tree or simplified DOM.',
-      inputSchema: {},
-      handler: async () => {
-        log('browser_snapshot');
-        const result = await browserRequest('snapshot');
-        const r = result as { url?: string; title?: string; snapshot?: string };
-        return { content: [{ type: 'text' as const, text: `Page: ${r.title ?? '?'}\nURL: ${r.url ?? '?'}\n\n${r.snapshot ?? 'No snapshot'}` }] };
-      },
+  );
+
+  server.tool(
+    'browser_snapshot',
+    'Get a structural snapshot of the current page — accessibility tree or simplified DOM.',
+    {},
+    async () => {
+      log('browser_snapshot');
+      const result = await browserRequest('snapshot');
+      const r = result as { url?: string; title?: string; snapshot?: string };
+      return { content: [{ type: 'text' as const, text: `Page: ${r.title ?? '?'}\nURL: ${r.url ?? '?'}\n\n${r.snapshot ?? 'No snapshot'}` }] };
     },
-    {
-      name: 'browser_screenshot',
-      description: 'Take a PNG screenshot of the visible area of the current browser tab.',
-      inputSchema: {},
-      handler: async () => {
-        log('browser_screenshot');
-        const result = await browserRequest('screenshot');
-        const r = result as { dataUrl?: string };
-        if (r.dataUrl) {
-          const base64 = r.dataUrl.replace(/^data:image\/png;base64,/, '');
-          return { content: [{ type: 'image' as const, data: base64, mimeType: 'image/png' }] };
-        }
-        return { content: [{ type: 'text' as const, text: 'Failed to capture screenshot' }] };
-      },
+  );
+
+  server.tool(
+    'browser_screenshot',
+    'Take a PNG screenshot of the visible area of the current browser tab.',
+    {},
+    async () => {
+      log('browser_screenshot');
+      const result = await browserRequest('screenshot');
+      const r = result as { dataUrl?: string };
+      if (r.dataUrl) {
+        const base64 = r.dataUrl.replace(/^data:image\/png;base64,/, '');
+        return { content: [{ type: 'image' as const, data: base64, mimeType: 'image/png' }] };
+      }
+      return { content: [{ type: 'text' as const, text: 'Failed to capture screenshot' }] };
     },
+  );
+
+  server.tool(
+    'browser_click',
+    'Click an element on the current page by CSS selector or XPath.',
     {
-      name: 'browser_click',
-      description: 'Click an element on the current page by CSS selector or XPath.',
-      inputSchema: {
-        selector: z.string().optional().describe('CSS selector'),
-        xpath: z.string().optional().describe('XPath'),
-      },
-      handler: async (args: { selector?: string; xpath?: string }) => {
-        log('browser_click:', args.selector ?? args.xpath);
-        const result = await browserRequest('click', { selector: args.selector, xpath: args.xpath });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-      },
+      selector: z.string().optional().describe('CSS selector'),
+      xpath: z.string().optional().describe('XPath'),
     },
-    {
-      name: 'browser_evaluate',
-      description: 'Execute JavaScript in the context of the current page.',
-      inputSchema: { expression: z.string().describe('JavaScript expression to evaluate') },
-      handler: async (args: { expression: string }) => {
-        log('browser_evaluate:', args.expression.slice(0, 100));
-        const result = await browserRequest('evaluate', { expression: args.expression });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-      },
+    async ({ selector, xpath }) => {
+      log('browser_click:', selector ?? xpath);
+      const result = await browserRequest('click', { selector, xpath });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     },
-  ];
+  );
+
+  server.tool(
+    'browser_evaluate',
+    'Execute JavaScript in the context of the current page.',
+    { expression: z.string().describe('JavaScript expression to evaluate') },
+    async ({ expression }) => {
+      log('browser_evaluate:', expression.slice(0, 100));
+      const result = await browserRequest('evaluate', { expression });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    },
+  );
 }

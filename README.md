@@ -256,8 +256,10 @@ After rebuilding the extension, click the refresh icon on `chrome://extensions` 
 
 ## Author
 
-Created by [Corneliu Maftuleac](https://x.com/cmaftuleac).
+Developed by [Fineguide.AI](https://fineguide.ai) — [Corneliu Maftuleac](https://x.com/cmaftuleac).
 
 ## License
 
-MIT — free to use, modify, and distribute. See [LICENSE](LICENSE) for details.
+MIT — free to use, modify, and distribute.
+
+Copyright (c) 2026 Fineguide.AI (Corneliu Maftuleac). See [LICENSE](LICENSE) for full terms.

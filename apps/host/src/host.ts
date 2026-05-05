@@ -142,15 +142,14 @@ function parseSkillFrontmatter(content: string): { name?: string; description?: 
 // Lazy-loaded modules
 let agentManager: import('./agent-manager.js').AgentManager | null = null;
 let sessionStore: import('./session-store.js').SessionStore | null = null;
-let browserResponseHandler: ((id: string, result?: unknown, error?: string) => void) | null = null;
 
 async function getAgentManager() {
   if (!agentManager) {
-    const [{ AgentManager }, { getBrowserToolDefinitions }] = await Promise.all([
-      import('./agent-manager.js'),
-      import('./browser-tools.js'),
-    ]);
-    agentManager = new AgentManager(getBrowserToolDefinitions());
+    const { AgentManager } = await import('./agent-manager.js');
+    agentManager = new AgentManager((requestId, action, params) => {
+      // Relay browser request from MCP server process to Chrome extension
+      send({ type: 'browser:request', requestId, action: action as any, params });
+    });
   }
   return agentManager;
 }
@@ -163,13 +162,7 @@ async function getSessionStore() {
   return sessionStore;
 }
 
-async function getBrowserResponseHandler() {
-  if (!browserResponseHandler) {
-    const { handleBrowserResponse } = await import('./browser-tools.js');
-    browserResponseHandler = handleBrowserResponse;
-  }
-  return browserResponseHandler;
-}
+// browserResponseHandler is no longer needed — responses go through agent manager IPC
 
 // ── Message Loop ──────────────────────────────────────────────────────────
 
@@ -233,7 +226,10 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
             send({ type: 'session:created', sessionId });
           },
           onStream: (delta) => {
-            send({ type: 'chat:stream', sessionId: resolvedSid, delta, messageId });
+            send({ type: 'chat:stream', sessionId: resolvedSid, delta, messageId, kind: 'text' });
+          },
+          onThinking: (delta, thinkingMessageId) => {
+            send({ type: 'chat:stream', sessionId: resolvedSid, delta, messageId: thinkingMessageId, kind: 'thinking' });
           },
           onToolUse: (toolName, summary) => {
             send({ type: 'agent:tool_use', sessionId: resolvedSid, toolName, summary });
@@ -267,7 +263,10 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
 
     case 'agent:interrupt': {
       const am = await getAgentManager();
-      am.interruptSession(msg.sessionId);
+      const stopped = am.interruptSession(msg.sessionId ?? '');
+      if (stopped) {
+        send({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'idle' });
+      }
       break;
     }
 
@@ -283,8 +282,8 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
       break;
 
     case 'browser:response': {
-      const handler = await getBrowserResponseHandler();
-      handler(msg.requestId, msg.result, msg.error);
+      const am = await getAgentManager();
+      am.sendBrowserResponse(msg.requestId, msg.result, msg.error);
       break;
     }
   }

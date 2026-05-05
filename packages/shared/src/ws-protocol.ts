@@ -53,6 +53,7 @@ export type ServerMessage =
       sessionId: string;
       delta: string;
       messageId: string;
+      kind?: 'text' | 'thinking' | 'tool_use';
     }
   | {
       type: 'chat:complete';
@@ -109,8 +110,14 @@ export interface SessionInfo {
   cwd?: string;
 }
 
+export interface SessionMessageBlock {
+  kind: 'text' | 'thinking' | 'tool_use';
+  content: string;
+}
+
 export interface SessionMessage {
   role: 'user' | 'assistant';
   content: string;
+  blocks?: SessionMessageBlock[];
   timestamp?: number;
 }

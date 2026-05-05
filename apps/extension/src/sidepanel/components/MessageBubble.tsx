@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from '../stores/chat-store';
@@ -30,7 +30,6 @@ function renderUserContent(content: string, anchors?: ElementAnchor[]) {
     return <span>{content}</span>;
   }
 
-  // Replace <tagName> tokens with chips
   const parts: React.ReactNode[] = [];
   let remaining = content;
   let key = 0;
@@ -59,6 +58,37 @@ function renderUserContent(content: string, anchors?: ElementAnchor[]) {
   return <>{parts}</>;
 }
 
+function ThinkingBubble({ message }: Props) {
+  const [manualToggle, setManualToggle] = useState<boolean | null>(null);
+  // Open while streaming, collapse when done — unless user manually toggled
+  const expanded = manualToggle !== null ? manualToggle : message.isStreaming === true;
+
+  return (
+    <div className="message-bubble message-bubble--thinking" onClick={() => setManualToggle(!expanded)}>
+      <div className="message-bubble__thinking-header">
+        <span className="message-bubble__thinking-icon">{expanded ? '\u25BE' : '\u25B8'}</span>
+        <span>Thinking{message.isStreaming ? '...' : ''}</span>
+      </div>
+      {expanded && (
+        <div className="message-bubble__thinking-content">
+          {message.content}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolUseBubble({ message }: Props) {
+  return (
+    <div className="message-bubble message-bubble--tool-use">
+      <span className="message-bubble__tool-icon">{'\u2692'}</span>
+      <div className="message-bubble__tool-detail">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -66,6 +96,14 @@ export function MessageBubble({ message }: Props) {
 
   if (isInterrupted) {
     return <div className="message-bubble message-bubble--interrupted">interrupted</div>;
+  }
+
+  if (message.kind === 'thinking') {
+    return <ThinkingBubble message={message} />;
+  }
+
+  if (message.kind === 'tool_use') {
+    return <ToolUseBubble message={message} />;
   }
 
   return (

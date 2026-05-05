@@ -1,8 +1,14 @@
 {
   "name": "claude-code-browser",
-  "version": "0.1.0",
-  "description": "Claude Code Browser - Connect Chrome to Claude Code for visual web debugging",
-  "author": "Corneliu Maftuleac (https://x.com/cmaftuleac)",
+  "version": "0.1.3",
+  "description": "Native messaging host (local Node.js bridge) for the Claude Code Browser Chrome extension. Bridges Chrome and your existing Claude Code CLI over Chrome's native messaging API so a Claude Code agent session can navigate, screenshot, snapshot the DOM and pick elements from pages open in your browser. Spawns a local @anthropic-ai/claude-agent-sdk session that reuses your existing Claude Code authentication (no extra account or API key) and exposes browser tools to the agent over MCP. Ships with the bundled /browse skill and an installer that wires up the native-messaging manifest, registers the host with Chrome, and installs the skill into your Claude Code config. Companion package — not a standalone Claude Code. Developed by Fineguide.AI (Corneliu Maftuleac).",
+  "author": {
+    "name": "Corneliu Maftuleac",
+    "url": "https://x.com/cmaftuleac"
+  },
+  "contributors": [
+    "Fineguide.AI (https://fineguide.ai)"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -29,7 +35,7 @@
   ],
   "scripts": {
     "prepublishOnly": "npm run build",
-    "build": "tsc && node -e \"const fs=require('fs'),p=require('path').join(__dirname,'dist','host.js'),c=fs.readFileSync(p,'utf8');fs.writeFileSync(p,c.replace(/^#!.*\\n/,'#!'+process.execPath+'\\n'));fs.chmodSync(p,'755');fs.writeFileSync(require('path').join(__dirname,'dist','install.js'),fs.readFileSync(require('path').join(__dirname,'dist','install.js'),'utf8').replace(/^#!.*\\n/,'#!'+process.execPath+'\\n'));fs.chmodSync(require('path').join(__dirname,'dist','install.js'),'755')\" && echo '{\"type\":\"module\"}' > dist/package.json",
+    "build": "tsc && chmod 755 dist/host.js dist/install.js && echo '{\"type\":\"module\"}' > dist/package.json",
     "dev": "tsx src/host.ts"
   },
   "dependencies": {
