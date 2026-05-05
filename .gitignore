@@ -5,4 +5,4 @@ dist/
 .env
 .DS_Store
 .playwright-mcp/
-claude-code-browser-extension.zip
+claude-code-browser-extension*.zip
