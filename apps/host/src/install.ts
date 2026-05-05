@@ -250,6 +250,26 @@ function installSkill(): boolean {
   return true;
 }
 
+/** Kill any running claude-code-browser host process so the next Chrome
+ *  connection spawns a fresh one from the just-updated manifest path. */
+function killStaleHosts(): void {
+  try {
+    if (platform() === 'win32') {
+      // PowerShell: kill node.exe processes whose command line references our host.js
+      execSync(
+        `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"Name='node.exe'\\" | Where-Object { $_.CommandLine -like '*claude-code-browser*host.js*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`,
+        { stdio: 'ignore' },
+      );
+    } else {
+      // pkill returns 0 when at least one process matched, 1 when none. Either is fine.
+      execSync('pkill -f "claude-code-browser.*host\\.js"', { stdio: 'ignore' });
+    }
+    info('Stopped running native host (Chrome will respawn it on next connect)');
+  } catch {
+    // No matches → pkill exits 1, PowerShell exits 0. Nothing to do.
+  }
+}
+
 function printExtensionInstallInstructions(): void {
   if (!STORE_EXTENSION_ID) {
     info('Chrome extension: Load manually from apps/extension/dist/ (not yet on Chrome Web Store)');
@@ -302,6 +322,9 @@ function install(explicitId?: string): void {
   }
 
   installNativeHost(extensionId);
+
+  // Step 3b: Kill any running host so the new manifest path takes effect on next connect
+  killStaleHosts();
 
   // Step 4: Install /browse skill
   installSkill();
