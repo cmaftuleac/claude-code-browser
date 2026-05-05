@@ -81,6 +81,23 @@ export function SetupScreen() {
         <p className="setup-screen__hint">
           This screen will disappear automatically once the bridge connects.
         </p>
+
+        <div className="setup-screen__footer">
+          <div className="setup-screen__footer-label">Developed by</div>
+          <a
+            className="setup-screen__footer-brand"
+            href="https://fineguide.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Fineguide.AI"
+          >
+            <img
+              className="setup-screen__footer-logo"
+              src="/fineguide-logo.svg"
+              alt="Fineguide.AI"
+            />
+          </a>
+        </div>
       </div>
     </div>
   );

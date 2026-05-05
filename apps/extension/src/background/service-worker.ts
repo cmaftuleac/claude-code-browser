@@ -8,6 +8,18 @@ let targetTabId: number | null = null;
 
 chrome.sidePanel.setOptions({ enabled: false });
 
+// ── Initialize usage stats on install / update ─────────────────────────────
+
+chrome.runtime.onInstalled.addListener(({ reason }) => {
+  if (reason !== 'install' && reason !== 'update') return;
+  chrome.storage.local.get('ccb-stats', (res) => {
+    if (res['ccb-stats']) return;
+    chrome.storage.local.set({
+      'ccb-stats': { installedAt: Date.now(), messageCount: 0, sessionCount: 0 },
+    });
+  });
+});
+
 // ── Native Host Connection ──────────────────────────────────────────────────
 
 function connectNativeHost() {

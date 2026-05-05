@@ -1,6 +1,14 @@
 import { create } from 'zustand';
 import type { ElementAnchor, SessionInfo } from '@claude-code-browser/shared';
 
+export function bumpStat(field: 'messageCount' | 'sessionCount') {
+  chrome.storage.local.get('ccb-stats', (res) => {
+    const prev = (res['ccb-stats'] as { installedAt: number; messageCount: number; sessionCount: number } | undefined)
+      ?? { installedAt: Date.now(), messageCount: 0, sessionCount: 0 };
+    chrome.storage.local.set({ 'ccb-stats': { ...prev, [field]: prev[field] + 1 } });
+  });
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -71,13 +79,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingAnchors: [],
     }),
 
-  addUserMessage: (content, anchors, images) =>
+  addUserMessage: (content, anchors, images) => {
+    bumpStat('messageCount');
     set((state) => ({
       messages: [
         ...state.messages,
         { id: `user-${Date.now()}`, role: 'user', content, timestamp: Date.now(), anchors, images },
       ],
-    })),
+    }));
+  },
 
   startAssistantMessage: (messageId, kind) =>
     set((state) => ({

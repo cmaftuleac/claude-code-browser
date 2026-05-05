@@ -32,7 +32,8 @@ echo "Sources registered for $DOMAIN ($(echo "$PATHS" | tr ',' '\n' | wc -l | tr
 ## Instructions
 
 If EXTENSION_NOT_INSTALLED:
-- Tell the user to install: Chrome Web Store then `npx claude-code-browser install`
+- Tell the user to install from the Chrome Web Store: https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf
+- Then run: `npx claude-code-browser install`
 - Do NOT proceed until confirmed.
 
 If EXTENSION_INSTALLED:
