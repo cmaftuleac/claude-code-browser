@@ -639,6 +639,22 @@ body {
   transition: border-color 0.15s;
 }
 
+/* Mirrors Claude Code's terminal "thinking" indicator.
+   Frame cycling is driven from React; CSS only handles position + color. */
+.chat-input__spinner {
+  position: absolute;
+  top: -22px;
+  right: 8px;
+  font-size: 18px;
+  line-height: 1;
+  color: #d97757;
+  pointer-events: none;
+  user-select: none;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  width: 1ch;
+  text-align: center;
+}
+
 .chat-input:focus-within {
   border-color: #f59e0b;
 }
