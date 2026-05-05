@@ -14,7 +14,7 @@ import {
   writeFileSync, mkdirSync, existsSync, unlinkSync, chmodSync,
   copyFileSync, readFileSync, readdirSync,
 } from 'node:fs';
-import { execSync, exec } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const HOST_NAME = 'com.claude_code_browser';
@@ -219,30 +219,13 @@ function installSkill(): boolean {
   return true;
 }
 
-function openExtensionStore(): void {
+function printExtensionInstallInstructions(): void {
   if (!STORE_EXTENSION_ID) {
     info('Chrome extension: Load manually from apps/extension/dist/ (not yet on Chrome Web Store)');
     return;
   }
-
-  const url = STORE_URL + STORE_EXTENSION_ID;
-  info(`Opening Chrome Web Store: ${url}`);
-
-  try {
-    switch (platform()) {
-      case 'darwin':
-        exec(`open -a "Google Chrome" "${url}"`);
-        break;
-      case 'linux':
-        exec(`xdg-open "${url}"`);
-        break;
-      case 'win32':
-        exec(`start chrome "${url}"`);
-        break;
-    }
-  } catch {
-    info(`Open manually: ${url}`);
-  }
+  info('Chrome extension is not installed.');
+  info(`Install it from: ${STORE_URL}`);
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -297,7 +280,7 @@ function install(explicitId?: string): void {
   if (detected) {
     ok('Chrome extension installed');
   } else {
-    openExtensionStore();
+    printExtensionInstallInstructions();
   }
 
   console.log('');
