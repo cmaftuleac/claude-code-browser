@@ -46,6 +46,8 @@ export function SourcesPanel() {
   const [sources, setSources] = useState<string[]>([]);
   const [domain, setDomain] = useState('');
   const [inputValue, setInputValue] = useState('');
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   // Load panel collapsed state
   useEffect(() => {
@@ -93,6 +95,35 @@ export function SourcesPanel() {
     saveSources(sources.filter((_, i) => i !== index));
   }, [sources, saveSources]);
 
+  const startEdit = useCallback((i: number, current: string) => {
+    setEditingIndex(i);
+    setEditValue(current);
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingIndex(null);
+    setEditValue('');
+  }, []);
+
+  const commitEdit = useCallback(() => {
+    if (editingIndex === null) return;
+    const next = editValue.trim();
+    const original = sources[editingIndex];
+    if (!next) {
+      saveSources(sources.filter((_, j) => j !== editingIndex));
+    } else if (next !== original) {
+      // If the new value already exists elsewhere, just drop this row to dedupe.
+      const dup = sources.some((p, j) => j !== editingIndex && p === next);
+      saveSources(
+        dup
+          ? sources.filter((_, j) => j !== editingIndex)
+          : sources.map((p, j) => (j === editingIndex ? next : p)),
+      );
+    }
+    setEditingIndex(null);
+    setEditValue('');
+  }, [editingIndex, editValue, sources, saveSources]);
+
   // Poll sources every second
   useEffect(() => {
     loadSources();
@@ -122,16 +153,38 @@ export function SourcesPanel() {
             <div className="sources-panel__list">
               {sources.map((path, i) => (
                 <div key={i} className="sources-panel__item">
-                  <span className="sources-panel__path" title={path}>
-                    {path.split('/').slice(-2).join('/')}
-                  </span>
-                  <button
-                    className="sources-panel__remove"
-                    onClick={() => removeSource(i)}
-                    title="Remove"
-                  >
-                    {'\u2715'}
-                  </button>
+                  {editingIndex === i ? (
+                    <input
+                      className="sources-panel__input"
+                      value={editValue}
+                      onChange={(e) => setEditValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+                        else if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+                      }}
+                      onBlur={commitEdit}
+                      onFocus={(e) => e.currentTarget.select()}
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <span
+                        className="sources-panel__path"
+                        title={path}
+                        onClick={() => startEdit(i, path)}
+                        style={{ cursor: 'text' }}
+                      >
+                        {path.split('/').slice(-2).join('/')}
+                      </span>
+                      <button
+                        className="sources-panel__remove"
+                        onClick={() => removeSource(i)}
+                        title="Remove"
+                      >
+                        {'\u2715'}
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>

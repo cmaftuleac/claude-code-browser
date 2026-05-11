@@ -208,10 +208,15 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
 
     case 'chat:send': {
       const am = await getAgentManager();
-      send({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'running' });
+      // Note: extension self-marks the session as running on submit. We don't
+      // re-emit agent:status here because msg.sessionId can be undefined for
+      // brand-new chats — the resulting sessionId:'' would land in the wrong
+      // bucket on the extension side. The proper running signal is the first
+      // chat:stream event (and the per-session bucket already exists).
       am.sendMessage({
         message: msg.message,
         sessionId: msg.sessionId,
+        clientRequestId: msg.clientRequestId,
         anchors: msg.anchors,
         images: msg.images,
         url: msg.url,

@@ -23,6 +23,10 @@ export type ClientMessage =
   | {
       type: 'chat:send';
       sessionId?: string;
+      /** Set by the client when sessionId is absent (brand-new chat). The host echoes
+       *  it back on session:created (and on any events emitted before session_id resolves),
+       *  letting the client correlate the eventual real session with its pending bucket. */
+      clientRequestId?: string;
       message: string;
       anchors?: ElementAnchor[];
       images?: string[];
@@ -47,10 +51,15 @@ export type ClientMessage =
 
 // ── Server → Client ─────────────────────────────────────────────────────────
 
+/** clientRequestId is set on events emitted before the SDK has resolved the canonical
+ *  session_id. Once sessionId is non-empty, sessionId alone is sufficient — the field
+ *  exists so events fired in the pre-resolution window can still be routed to the
+ *  pending bucket the client created on submit. */
 export type ServerMessage =
   | {
       type: 'chat:stream';
       sessionId: string;
+      clientRequestId?: string;
       delta: string;
       messageId: string;
       kind?: 'text' | 'thinking' | 'tool_use';
@@ -58,24 +67,27 @@ export type ServerMessage =
   | {
       type: 'chat:complete';
       sessionId: string;
+      clientRequestId?: string;
       result: string;
       messageId: string;
       costUsd?: number;
     }
-  | { type: 'chat:error'; sessionId: string; error: string }
+  | { type: 'chat:error'; sessionId: string; clientRequestId?: string; error: string }
   | {
       type: 'agent:status';
       sessionId: string;
+      clientRequestId?: string;
       status: 'running' | 'idle' | 'error';
     }
   | {
       type: 'agent:tool_use';
       sessionId: string;
+      clientRequestId?: string;
       toolName: string;
       summary: string;
     }
   | { type: 'session:list'; sessions: SessionInfo[] }
-  | { type: 'session:created'; sessionId: string }
+  | { type: 'session:created'; sessionId: string; clientRequestId?: string }
   | {
       type: 'session:messages';
       sessionId: string;

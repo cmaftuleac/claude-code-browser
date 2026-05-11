@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import { useConnectionStore } from '../stores/connection-store';
-import { useChatStore, bumpStat } from '../stores/chat-store';
+import { useChatStore, bumpStat, type ChatMessage } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
 
 /** Get target tab URL and domain from the pinned tab */
@@ -23,14 +23,12 @@ function getTargetTabInfo(callback: (url: string, domain: string) => void) {
   });
 }
 
-/** Drop server events whose sessionId doesn't match the active session.
- *  Brand-new sessions have activeSessionId=null until session:created arrives — pass those.
- *  Some events (e.g. session:list) carry no sessionId — pass those too. */
-function isForActiveSession(msgSessionId?: string): boolean {
-  const active = useChatStore.getState().activeSessionId;
-  if (!active) return true;
-  if (!msgSessionId) return true;
-  return msgSessionId === active;
+/** Pick the routing key for a server event: prefer the canonical sessionId, fall
+ *  back to clientRequestId for events emitted before session_id resolved. */
+function routeKey(msg: { sessionId?: string; clientRequestId?: string }): string | null {
+  if (msg.sessionId) return msg.sessionId;
+  if (msg.clientRequestId) return msg.clientRequestId;
+  return null;
 }
 
 /**
@@ -69,8 +67,8 @@ export function useNativePort() {
           // Native host connected but we wait for connection:ready
         } else {
           setStatus('disconnected');
-          // Native host died — agent state is gone with it.
-          useChatStore.getState().setAgentRunning(false);
+          // Native host died — every in-flight session is gone with it.
+          useChatStore.getState().markAllSessionsIdle();
         }
         return;
       }
@@ -108,7 +106,9 @@ export function useNativePort() {
         }
 
         case 'session:created': {
-          store.setActiveSession(msg.sessionId);
+          if (msg.clientRequestId) {
+            store.migratePendingToSession(msg.clientRequestId, msg.sessionId);
+          }
           bumpStat('sessionCount');
           // Register this session for the target tab's domain, then refresh session list
           getTargetTabInfo((_url, domain) => {
@@ -127,18 +127,10 @@ export function useNativePort() {
         }
 
         case 'session:messages': {
-          if (!isForActiveSession(msg.sessionId)) break;
-          const loaded: Array<{
-            id: string;
-            role: 'user' | 'assistant' | 'system';
-            content: string;
-            timestamp: number;
-            kind?: 'text' | 'thinking' | 'tool_use';
-          }> = [];
+          const loaded: ChatMessage[] = [];
           for (let i = 0; i < msg.messages.length; i++) {
             const m = msg.messages[i];
             if (m.role === 'assistant' && m.blocks && m.blocks.length > 0) {
-              // Expand blocks into separate messages for proper rendering
               for (let j = 0; j < m.blocks.length; j++) {
                 const block = m.blocks[j];
                 loaded.push({
@@ -158,104 +150,87 @@ export function useNativePort() {
               });
             }
           }
-          useChatStore.setState({ messages: loaded });
+          // Merge disk history into the bucket. If we have authoritative history
+          // already (observed live since session:created, or already loaded once),
+          // this is a no-op. Otherwise disk replaces the history prefix and any
+          // in-progress streaming tail is preserved.
+          store.loadSessionHistory(msg.sessionId, loaded);
           break;
         }
 
         case 'chat:stream': {
-          if (!isForActiveSession(msg.sessionId)) break;
+          const key = routeKey(msg);
+          if (!key) break;
           const kind = msg.kind ?? 'text';
-          const msgs = useChatStore.getState().messages;
+          const state = useChatStore.getState();
+          const bucket = state.sessionStates[key] ?? state.pendingNewChats[key];
+          const msgs = bucket?.messages ?? [];
           const last = msgs[msgs.length - 1];
           let targetId: string;
 
-          // Merge into last message if same kind and still part of this turn
           if (last && last.kind === kind && last.role === 'assistant') {
             targetId = last.id;
-            // Re-open if it was closed (e.g. thinking was auto-closed)
-            if (!last.isStreaming) {
-              useChatStore.setState({
-                messages: msgs.map((m) => m.id === targetId ? { ...m, isStreaming: true } : m),
-              });
-            }
+            // Re-open if it was sealed off (e.g., a same-kind block re-opens after
+            // a brief kind interlude in the same SDK message uuid).
+            if (!last.isStreaming) store.setMessageStreaming(key, targetId, true);
           } else {
-            // Different kind or no messages — create a new section
-            // Close the previous streaming message first
+            // Kind transition or first message in bucket: seal off the prior partial
+            // (target only — sibling streams in other turns stay open) and start fresh.
             if (last && last.isStreaming) {
-              useChatStore.setState({
-                messages: msgs.map((m) => m.id === last.id ? { ...m, isStreaming: false } : m),
-              });
+              store.setMessageStreaming(key, last.id, false);
             }
             targetId = msg.messageId;
-            useChatStore.getState().startAssistantMessage(targetId, kind);
+            store.startAssistantMessage(key, targetId, kind);
           }
 
-          useChatStore.getState().appendDelta(targetId, msg.delta);
+          store.appendDelta(key, targetId, msg.delta);
           break;
         }
 
         case 'agent:tool_use': {
-          if (!isForActiveSession(msg.sessionId)) break;
+          const key = routeKey(msg);
+          if (!key) break;
           if (msg.toolName === '_update_') {
-            // Update the last tool_use message with the full summary
-            const msgs = useChatStore.getState().messages;
-            const lastTool = [...msgs].reverse().find((m) => m.kind === 'tool_use');
-            if (lastTool) {
-              useChatStore.setState({
-                messages: msgs.map((m) => m.id === lastTool.id ? { ...m, content: msg.summary } : m),
-              });
-            }
+            store.updateLastToolUse(key, msg.summary);
           } else {
-            store.addToolUseMessage(msg.toolName, msg.summary);
+            store.addToolUseMessage(key, msg.summary);
           }
           break;
         }
 
-        case 'chat:complete':
-          if (!isForActiveSession(msg.sessionId)) break;
-          useChatStore.getState().completeMessage(msg.messageId, msg.result);
-          store.setAgentRunning(false);
+        case 'chat:complete': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.completeMessage(key, msg.messageId, msg.result);
+          store.setSessionRunning(key, false);
           // Refresh session list (title may have been generated)
           send({ type: 'session:list' });
           break;
+        }
 
         case 'chat:error': {
-          if (!isForActiveSession(msg.sessionId)) break;
+          const key = routeKey(msg);
+          if (!key) break;
           const isInterrupt = msg.error.includes('interrupted') || msg.error.includes('Interrupted');
+          const sysMsg: ChatMessage = isInterrupt
+            ? { id: `int-${Date.now()}`, role: 'system', content: '_interrupted_', timestamp: Date.now() }
+            : { id: `err-${Date.now()}`, role: 'system', content: `Error: ${msg.error}`, timestamp: Date.now() };
           if (isInterrupt) {
-            // Show subtle italic "interrupted" like Claude Code
-            useChatStore.setState({
-              messages: [
-                ...useChatStore.getState().messages,
-                {
-                  id: `int-${Date.now()}`,
-                  role: 'system',
-                  content: '_interrupted_',
-                  timestamp: Date.now(),
-                },
-              ],
-            });
+            console.info('[ccb] session interrupted', { key, message: msg.error });
           } else {
-            useChatStore.setState({
-              messages: [
-                ...useChatStore.getState().messages,
-                {
-                  id: `err-${Date.now()}`,
-                  role: 'system',
-                  content: `Error: ${msg.error}`,
-                  timestamp: Date.now(),
-                },
-              ],
-            });
+            console.error('[ccb] chat:error', { key, error: msg.error });
           }
-          store.setAgentRunning(false);
+          store.addSystemMessage(key, sysMsg);
+          store.setSessionRunning(key, false);
           break;
         }
 
-        case 'agent:status':
-          if (!isForActiveSession(msg.sessionId)) break;
-          store.setAgentRunning(msg.status === 'running');
+        case 'agent:status': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.setSessionRunning(key, msg.status === 'running');
           break;
+        }
 
         case 'health':
           break;
@@ -267,7 +242,6 @@ export function useNativePort() {
         case 'sources:set':
           // Store sources in chrome.storage.local, keyed by domain
           chrome.storage.local.set({ [`ccb-sources-${msg.domain}`]: msg.paths });
-          // Notify SourcesPanel to reload
           window.dispatchEvent(new CustomEvent('ccb:sources-updated'));
           break;
 
@@ -294,8 +268,9 @@ export function useNativePort() {
       console.error('[CCB] Service worker port disconnected');
       portRef.current = null;
       setStatus('disconnected');
-      // Clear running state so the input box leaves stop-button mode while we reconnect.
-      useChatStore.getState().setAgentRunning(false);
+      // Clear running state across all buckets so the input box leaves stop-button
+      // mode while we reconnect.
+      useChatStore.getState().markAllSessionsIdle();
       // Reconnect after a short delay
       setTimeout(connect, 2000);
     });

@@ -37,6 +37,9 @@ function findClaudeCliJs(): string {
 export interface SendMessageParams {
   message: string;
   sessionId?: string;
+  /** Client-generated correlation token for brand-new sessions. Echoed back on
+   *  session:created and any events emitted before the canonical session_id resolves. */
+  clientRequestId?: string;
   anchors?: ElementAnchor[];
   images?: string[];
   url: string;
@@ -138,12 +141,30 @@ class AsyncMessagePump<T> implements AsyncIterable<T> {
 interface LiveSession {
   /** Empty until the SDK reports session_id on the first frame */
   sessionId: string;
+  /** Client-generated correlation token. Echoed on session:created and on any events
+   *  emitted while sessionId is still empty, so the client can route them to its
+   *  pending bucket. Undefined for resumed sessions (no correlation needed). */
+  clientRequestId?: string;
   pump: AsyncMessagePump<SDKUserMessage>;
   query: Query;
   abort: AbortController;
   cwd: string;
+  /** Active additionalDirectories — kept in sync with the SDK's flag settings layer */
+  sources: string[];
+  /** Set when the user clicks Stop. The SDK emits `result/error_during_execution`
+   *  in response to interrupt(), so we use this flag to distinguish a deliberate
+   *  stop from a real error. Reset when the resulting message is consumed. */
+  interrupted: boolean;
   /** Set once for brand-new sessions so we can renameSession after init */
   pendingTitle: string;
+}
+
+function sourcesEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const as = [...a].sort();
+  const bs = [...b].sort();
+  for (let i = 0; i < as.length; i++) if (as[i] !== bs[i]) return false;
+  return true;
 }
 
 export class AgentManager {
@@ -252,6 +273,21 @@ CRITICAL RULES:
     let live: LiveSession | null = params.sessionId ? this.liveSessions.get(params.sessionId) ?? null : null;
     if (!live) {
       live = this.createLiveSession(params);
+    } else {
+      // Existing session: if the user changed paths in the UI, push the new
+      // additionalDirectories into the running Query before this turn fires.
+      const nextSources = params.sources ?? [];
+      if (!sourcesEqual(live.sources, nextSources)) {
+        try {
+          await live.query.applyFlagSettings({
+            permissions: { additionalDirectories: nextSources },
+          });
+          log('Updated additionalDirectories for session', live.sessionId, '->', nextSources);
+          live.sources = nextSources;
+        } catch (err) {
+          log('applyFlagSettings failed:', err instanceof Error ? err.message : String(err));
+        }
+      }
     }
 
     const sdkMsg: SDKUserMessage = {
@@ -296,10 +332,13 @@ CRITICAL RULES:
 
     const live: LiveSession = {
       sessionId: params.sessionId ?? '',
+      clientRequestId: params.clientRequestId,
       pump,
       query: q,
       abort: abortController,
       cwd,
+      sources: params.sources ?? [],
+      interrupted: false,
       pendingTitle,
     };
 
@@ -315,6 +354,18 @@ CRITICAL RULES:
     let currentToolInput = '';
     let insideXmlToolBlock = false;
 
+    // Inject clientRequestId on streaming events while sessionId is still empty,
+    // so the extension can route pre-resolution events to its pending bucket.
+    type StreamingEvent = Extract<ServerMessage,
+      { type: 'chat:stream' | 'chat:complete' | 'chat:error' | 'agent:status' | 'agent:tool_use' }>;
+    const emit = (evt: StreamingEvent): void => {
+      if (!live.sessionId && live.clientRequestId) {
+        this.send({ ...evt, clientRequestId: live.clientRequestId });
+      } else {
+        this.send(evt);
+      }
+    };
+
     try {
       for await (const message of live.query) {
         // Resolve canonical sessionId on first frame that carries it.
@@ -323,7 +374,9 @@ CRITICAL RULES:
           live.sessionId = sid;
           this.pendingLiveSessions.delete(live);
           this.liveSessions.set(sid, live);
-          this.send({ type: 'session:created', sessionId: sid });
+          // session:created must include clientRequestId so the extension migrates
+          // its pending bucket to the real sessionId.
+          this.send({ type: 'session:created', sessionId: sid, clientRequestId: live.clientRequestId });
           if (live.pendingTitle) {
             const title = live.pendingTitle;
             live.pendingTitle = '';
@@ -347,12 +400,12 @@ CRITICAL RULES:
               if (event.content_block?.type === 'tool_use' && event.content_block.name) {
                 currentToolName = event.content_block.name;
                 currentToolInput = '';
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: currentToolName, summary: currentToolName });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: currentToolName, summary: currentToolName });
               }
             }
             if (event.type === 'content_block_delta') {
               if (event.delta?.type === 'thinking_delta' && event.delta.thinking) {
-                this.send({ type: 'chat:stream', sessionId: sid, delta: event.delta.thinking, messageId: message.uuid, kind: 'thinking' });
+                emit({ type: 'chat:stream', sessionId: sid, delta: event.delta.thinking, messageId: message.uuid, kind: 'thinking' });
               }
               if (event.delta?.type === 'text_delta' && event.delta.text) {
                 const text = event.delta.text;
@@ -370,7 +423,7 @@ CRITICAL RULES:
                 if (/<\/?(?:invoke|antml:invoke|antml:parameter)[\s>]/.test(text)) break;
                 if (/<parameter\s+name=/.test(text)) break;
                 if (/^\s*<\/(?:parameter|invoke|function_calls)>\s*$/.test(text)) break;
-                this.send({ type: 'chat:stream', sessionId: sid, delta: text, messageId: message.uuid, kind: 'text' });
+                emit({ type: 'chat:stream', sessionId: sid, delta: text, messageId: message.uuid, kind: 'text' });
               }
               if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
                 currentToolInput += event.delta.partial_json;
@@ -379,7 +432,7 @@ CRITICAL RULES:
             if (event.type === 'content_block_stop' && currentToolName) {
               const detail = formatToolDetail(currentToolName, currentToolInput);
               if (detail) {
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary: detail });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary: detail });
               }
               currentToolName = '';
               currentToolInput = '';
@@ -388,7 +441,7 @@ CRITICAL RULES:
           }
           case 'tool_use_summary': {
             const summary = (message as { summary: string }).summary;
-            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary });
+            emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_update_', summary });
             break;
           }
           case 'result': {
@@ -396,17 +449,28 @@ CRITICAL RULES:
             const turnSid = (r.session_id as string) || sid;
             const turnMessageId = (r.uuid as string) || crypto.randomUUID();
             if (r.subtype === 'success') {
-              this.send({
+              emit({
                 type: 'chat:complete',
                 sessionId: turnSid,
                 result: r.result as string,
                 messageId: turnMessageId,
                 costUsd: r.total_cost_usd as number | undefined,
               });
-              this.send({ type: 'agent:status', sessionId: turnSid, status: 'idle' });
+              emit({ type: 'agent:status', sessionId: turnSid, status: 'idle' });
+            } else if (live.interrupted) {
+              // User clicked Stop. The SDK reports this as error_during_execution.
+              live.interrupted = false;
+              log('Session interrupted by user:', turnSid);
+              emit({ type: 'chat:error', sessionId: turnSid, error: 'Interrupted.' });
+              emit({ type: 'agent:status', sessionId: turnSid, status: 'idle' });
             } else {
-              this.send({ type: 'chat:error', sessionId: turnSid, error: (r.error as string) || 'Agent returned an error' });
-              this.send({ type: 'agent:status', sessionId: turnSid, status: 'error' });
+              const errors = Array.isArray(r.errors) ? (r.errors as unknown[]).map(String).filter(Boolean) : [];
+              const detail = errors.length > 0
+                ? errors.join('\n')
+                : `Agent returned ${r.subtype as string}${r.stop_reason ? ` (stop_reason: ${r.stop_reason as string})` : ''}`;
+              log('Session result error:', turnSid, JSON.stringify({ subtype: r.subtype, stop_reason: r.stop_reason, errors }));
+              emit({ type: 'chat:error', sessionId: turnSid, error: detail });
+              emit({ type: 'agent:status', sessionId: turnSid, status: 'error' });
             }
             break;
           }
@@ -416,7 +480,7 @@ CRITICAL RULES:
             if (m.isAuthenticating) lines.push('Authenticating…');
             if (m.error) lines.push(`Error: ${m.error}`);
             if (m.output?.length) lines.push(m.output.join('\n'));
-            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
+            emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
             break;
           }
           case 'rate_limit_event': {
@@ -426,7 +490,7 @@ CRITICAL RULES:
             if (info.rateLimitType) lines.push(`Window: \`${info.rateLimitType}\``);
             if (typeof info.utilization === 'number') lines.push(`Utilization: ${Math.round(info.utilization * 100)}%`);
             if (info.resetsAt) lines.push(`Resets: ${new Date(info.resetsAt * 1000).toLocaleString()}`);
-            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
+            emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: lines.join('\n\n') });
             break;
           }
           case 'system': {
@@ -437,25 +501,25 @@ CRITICAL RULES:
                 const attempt = m.attempt ?? '?';
                 const max = m.max_retries ?? '?';
                 const errStatus = m.error_status ? ` (HTTP ${m.error_status})` : '';
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'api_retry')}\n\nRetrying API call (${attempt}/${max})${errStatus}…` });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'api_retry')}\n\nRetrying API call (${attempt}/${max})${errStatus}…` });
                 break;
               }
               case 'task_started': {
                 const desc = (m.description as string) || 'subagent task';
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: 'Task', summary: `**Task**: ${desc}` });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: 'Task', summary: `**Task**: ${desc}` });
                 break;
               }
               case 'task_notification': {
                 const status = (m.status as string) || 'completed';
                 const summary = (m.summary as string) || '';
                 const body = summary ? `**${status}** — ${summary}` : `**${status}**`;
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'task_notification')}\n\n${body}` });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'task_notification')}\n\n${body}` });
                 break;
               }
               case 'local_command_output': {
                 const content = (m.content as string) || '';
                 if (content.trim()) {
-                  this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'local_command_output')}\n\n${content}` });
+                  emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', 'local_command_output')}\n\n${content}` });
                 }
                 break;
               }
@@ -465,7 +529,7 @@ CRITICAL RULES:
                 const out = stdout || stderr;
                 if (out.trim()) {
                   const hookName = (m.hook_name as string) || 'hook';
-                  this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', `hook_response/${hookName}`)}\n\n${out}` });
+                  emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: `${systemHeader('system', `hook_response/${hookName}`)}\n\n${out}` });
                 }
                 break;
               }
@@ -485,7 +549,7 @@ CRITICAL RULES:
                 const text = extractHumanReadable(m);
                 const header = systemHeader('system', subtype);
                 const body = text ? `${header}\n\n${text}` : header;
-                this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
+                emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
                 log('best-effort surfaced unknown system subtype:', subtype ?? '?');
                 break;
               }
@@ -504,7 +568,7 @@ CRITICAL RULES:
             const text = extractHumanReadable(m);
             const header = systemHeader((m.type as string) || 'unknown');
             const body = text ? `${header}\n\n${text}` : header;
-            this.send({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
+            emit({ type: 'agent:tool_use', sessionId: sid, toolName: '_notice_', summary: body });
             log('best-effort surfaced unknown SDK message type:', (m.type as string) || '?');
             break;
           }
@@ -512,12 +576,19 @@ CRITICAL RULES:
       }
     } catch (err: unknown) {
       const sid = live.sessionId;
-      if (live.abort.signal.aborted) {
-        this.send({ type: 'chat:error', sessionId: sid, error: 'Query interrupted by user' });
+      if (live.interrupted || live.abort.signal.aborted) {
+        live.interrupted = false;
+        log('Session interrupted by user (caught from iterator):', sid);
+        emit({ type: 'chat:error', sessionId: sid, error: 'Interrupted.' });
+        emit({ type: 'agent:status', sessionId: sid, status: 'idle' });
       } else {
-        this.send({ type: 'chat:error', sessionId: sid, error: err instanceof Error ? err.message : String(err) });
+        const detail = err instanceof Error
+          ? `${err.name}: ${err.message}${err.stack ? `\n${err.stack}` : ''}`
+          : String(err);
+        log('Session iterator error:', sid, detail);
+        emit({ type: 'chat:error', sessionId: sid, error: detail });
+        emit({ type: 'agent:status', sessionId: sid, status: 'error' });
       }
-      this.send({ type: 'agent:status', sessionId: sid, status: 'error' });
     } finally {
       if (live.sessionId) this.liveSessions.delete(live.sessionId);
       this.pendingLiveSessions.delete(live);
@@ -529,6 +600,7 @@ CRITICAL RULES:
     const live = this.liveSessions.get(sessionId);
     if (live) {
       log('Interrupting session:', sessionId);
+      live.interrupted = true;
       live.query.interrupt().catch((err) => {
         log('interrupt() failed, falling back to abort:', err instanceof Error ? err.message : String(err));
         try { live.abort.abort(); } catch { /* ignore */ }
@@ -538,6 +610,7 @@ CRITICAL RULES:
     // Fallback for the rare case interrupt arrives before sessionId is resolved.
     for (const pending of this.pendingLiveSessions) {
       log('Interrupting pending session (no canonical id yet)');
+      pending.interrupted = true;
       pending.query.interrupt().catch(() => {
         try { pending.abort.abort(); } catch { /* ignore */ }
       });

@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ClientMessage } from '@claude-code-browser/shared';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, selectActiveSessionId } from '../stores/chat-store';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';
 import { ReviewPrompt } from './ReviewPrompt';
@@ -10,9 +10,9 @@ interface Props {
 }
 
 export function ChatSidebar({ send }: Props) {
-  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const activeSessionId = useChatStore(selectActiveSessionId);
   const sessions = useChatStore((s) => s.sessions);
-  const session = sessions.find((s) => s.id === activeSessionId);
+  const session = activeSessionId ? sessions.find((s) => s.id === activeSessionId) : undefined;
 
   return (
     <div className="chat-sidebar">

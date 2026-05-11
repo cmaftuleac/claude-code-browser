@@ -1,11 +1,11 @@
 import React, { useEffect, useRef } from 'react';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, selectActiveMessages } from '../stores/chat-store';
 import { MessageBubble } from './MessageBubble';
 
 const STICK_THRESHOLD_PX = 40;
 
 export function MessageList() {
-  const messages = useChatStore((s) => s.messages);
+  const messages = useChatStore(selectActiveMessages);
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);

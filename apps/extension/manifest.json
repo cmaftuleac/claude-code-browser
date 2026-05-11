@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Claude Code Browser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": "Fineguide.AI (Corneliu Maftuleac) — https://fineguide.ai",
   "description": "Point at page elements and let Claude Code fix them. Visual debugging with picker, DOM tree, streaming chat. By Fineguide.AI.",
   "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
