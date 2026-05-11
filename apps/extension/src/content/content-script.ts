@@ -22,7 +22,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === 'GET_DOM_TREE') {
-    const tree = buildDomTree(document.body, '', 0, 8, 20);
+    // No depth/child caps — user wants the full tree, never truncated.
+    const tree = buildDomTree(document.body, '', 0, Infinity, Infinity);
     sendResponse({ tree });
     return true;
   }
@@ -30,7 +31,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'GET_SUBTREE') {
     const el = findElementByPath(document.body, message.path);
     if (el) {
-      const children = buildDomTreeChildren(el, message.path, 0, 4, 20);
+      const children = buildDomTreeChildren(el, message.path, 0, Infinity, Infinity);
       sendResponse({ children });
     } else {
       sendResponse({ children: [] });
