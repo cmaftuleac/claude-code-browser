@@ -8,7 +8,7 @@ const SPINNER_BASE = ['·', '✢', '✳', '✶', '✻', '✽'];
 const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
 const SPINNER_INTERVAL_MS = 120;
 import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
 import { useConnectionStore } from '../stores/connection-store';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
@@ -40,9 +40,10 @@ export function ChatInput({ send }: Props) {
   const pendingAnchors = useChatStore((s) => s.pendingAnchors);
   const clearAnchors = useChatStore((s) => s.clearAnchors);
   const addUserMessage = useChatStore((s) => s.addUserMessage);
-  const activeSessionId = useChatStore((s) => s.activeSessionId);
-  const isAgentRunning = useChatStore((s) => s.isAgentRunning);
-  const setAgentRunning = useChatStore((s) => s.setAgentRunning);
+  const activeView = useChatStore((s) => s.activeView);
+  const isAgentRunning = useChatStore(selectActiveIsRunning);
+  const setSessionRunning = useChatStore((s) => s.setSessionRunning);
+  const newChat = useChatStore((s) => s.newChat);
 
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   useEffect(() => {
@@ -139,12 +140,30 @@ export function ChatInput({ send }: Props) {
     const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
     const imgs = images.length > 0 ? [...images] : undefined;
 
+    // Resolve which bucket the message + running flag belong to. For empty/pending,
+    // we send no sessionId and let the host create one; clientRequestId correlates
+    // events back to the pending bucket until session:created arrives.
+    let sessionIdForSend: string | undefined;
+    let clientRequestId: string | undefined;
+    let runningKey: string;
+    if (activeView.kind === 'session') {
+      sessionIdForSend = activeView.sessionId;
+      runningKey = activeView.sessionId;
+    } else if (activeView.kind === 'pending') {
+      clientRequestId = activeView.clientRequestId;
+      runningKey = activeView.clientRequestId;
+    } else {
+      clientRequestId = newChat();
+      runningKey = clientRequestId;
+    }
+
     addUserMessage(message, anchors, imgs);
     const tid = useConnectionStore.getState().targetTabId;
     const sendMsg = (url: string) => {
       send({
         type: 'chat:send',
-        sessionId: activeSessionId ?? undefined,
+        sessionId: sessionIdForSend,
+        clientRequestId,
         message,
         anchors,
         images: imgs,
@@ -157,21 +176,24 @@ export function ChatInput({ send }: Props) {
     } else {
       sendMsg('');
     }
-    setAgentRunning(true);
+    setSessionRunning(runningKey, true);
 
     clearAnchors();
     setImages([]);
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, addUserMessage, send, activeSessionId, sourcePaths, clearAnchors, setAgentRunning]);
+  }, [pendingAnchors, images, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat]);
 
   const handleStop = useCallback(() => {
-    // Send interrupt for active session, or empty string to abort current query
-    send({ type: 'agent:interrupt', sessionId: activeSessionId ?? '' });
-    // Immediately hide stop button — host will confirm with chat:error
-    setAgentRunning(false);
-  }, [activeSessionId, send, setAgentRunning]);
+    // Send interrupt for active session. Empty string falls back to the host's
+    // pending-session interrupt path for new chats whose sessionId isn't resolved yet.
+    const sid = activeView.kind === 'session' ? activeView.sessionId : '';
+    send({ type: 'agent:interrupt', sessionId: sid });
+    // Immediately mark the active bucket idle — host will confirm with chat:error
+    if (activeView.kind === 'session') setSessionRunning(activeView.sessionId, false);
+    else if (activeView.kind === 'pending') setSessionRunning(activeView.clientRequestId, false);
+  }, [activeView, send, setSessionRunning]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (showSlashMenu) return;

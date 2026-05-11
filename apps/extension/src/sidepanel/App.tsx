@@ -13,7 +13,7 @@ const DomTreePanel = lazy(() => import('./components/DomTreePanel').then(m => ({
 export function App() {
   const { send } = useNativePort();
   const status = useConnectionStore((s) => s.status);
-  const clearMessages = useChatStore((s) => s.clearMessages);
+  const newChat = useChatStore((s) => s.newChat);
 
   if (status !== 'connected') {
     return <SetupScreen />;
@@ -23,7 +23,7 @@ export function App() {
     <div className="app-container">
       <div className="app-topbar">
         <ConnectionStatus />
-        <button className="app-topbar__new-chat" onClick={clearMessages}>+ New Chat</button>
+        <button className="app-topbar__new-chat" onClick={() => newChat()}>+ New Chat</button>
       </div>
       <SessionList send={send} />
       <SourcesPanel />

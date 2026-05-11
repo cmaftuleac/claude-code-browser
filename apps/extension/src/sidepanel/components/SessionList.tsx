@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ClientMessage } from '@claude-code-browser/shared';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, selectActiveSessionId } from '../stores/chat-store';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -9,12 +9,15 @@ interface Props {
 export function SessionList({ send }: Props) {
   const [collapsed, setCollapsed] = useState(true);
   const sessions = useChatStore((s) => s.sessions);
-  const activeSessionId = useChatStore((s) => s.activeSessionId);
+  const activeSessionId = useChatStore(selectActiveSessionId);
   const selectSession = useChatStore((s) => s.selectSession);
   const handleResume = (id: string) => {
     if (id === activeSessionId) return;
-    selectSession(id);
-    send({ type: 'session:resume', sessionId: id });
+    // selectSession returns true when bucket was empty — only then fetch disk history.
+    // For switch-back to a session whose live deltas are already buffered, skip
+    // resume so we don't overwrite the live state with a staler disk snapshot.
+    const needsResume = selectSession(id);
+    if (needsResume) send({ type: 'session:resume', sessionId: id });
   };
 
   const sorted = [...sessions].sort((a, b) => b.lastModified - a.lastModified);

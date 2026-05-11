@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useChatStore } from '../stores/chat-store';
+import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
 
 interface Stats {
   installedAt: number;
@@ -61,14 +61,17 @@ export function useReviewPrompt(): {
 } {
   const [eligible, setEligible] = useState(false);
   const [hiddenInSession, setHiddenInSession] = useState(false);
-  const isAgentRunning = useChatStore((s) => s.isAgentRunning);
+  const isAgentRunning = useChatStore(selectActiveIsRunning);
+  const activeView = useChatStore((s) => s.activeView);
   const wasAgentRunning = useRef(false);
+  const lastActiveViewRef = useRef(activeView);
 
   useEffect(() => {
-    // Trigger eligibility check on the falling edge of isAgentRunning —
-    // i.e. the moment Claude finishes a turn. This keeps the prompt tied
-    // to a natural pause in the conversation rather than interrupting work.
-    const justFinished = wasAgentRunning.current && !isAgentRunning;
+    // Suppress the falling-edge check when the user just switched views — going
+    // from a running session to an idle one isn't "Claude finished a turn".
+    const viewChanged = lastActiveViewRef.current !== activeView;
+    lastActiveViewRef.current = activeView;
+    const justFinished = wasAgentRunning.current && !isAgentRunning && !viewChanged;
     wasAgentRunning.current = isAgentRunning;
     if (!justFinished) return;
     if (eligible) return;
@@ -87,7 +90,7 @@ export function useReviewPrompt(): {
         },
       });
     });
-  }, [isAgentRunning, eligible]);
+  }, [isAgentRunning, activeView, eligible]);
 
   const dismiss = useCallback(() => {
     setHiddenInSession(true);
