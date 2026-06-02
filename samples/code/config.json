@@ -1,0 +1,24 @@
+{
+  "name": "sample-config",
+  "version": "1.0.0",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3000,
+    "tls": false
+  },
+  "database": {
+    "url": "postgres://localhost:5432/sample",
+    "pool": { "min": 2, "max": 10 },
+    "ssl": true
+  },
+  "features": {
+    "newDashboard": true,
+    "betaSearch": false,
+    "compactMode": "auto"
+  },
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "destinations": ["stdout", "file:/var/log/app.log"]
+  }
+}

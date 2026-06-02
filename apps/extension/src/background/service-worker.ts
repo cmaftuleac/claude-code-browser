@@ -3,6 +3,11 @@ let nativePort: chrome.runtime.Port | null = null;
 let sidePanelPort: chrome.runtime.Port | null = null;
 let nativeMessages: unknown[] = []; // Buffer messages before sidepanel connects
 let targetTabId: number | null = null;
+// The host emits connection:ready (carrying its real version) exactly once per
+// spawn. Cache it so a side panel that connects (or reconnects) while the host is
+// already alive still learns the real version, instead of a fabricated stub.
+// Cleared on native disconnect so a stale version can't outlive its host.
+let lastConnectionReady: { type: string; serverVersion?: string } | null = null;
 
 // ── Disable side panel globally on startup ─────────────────────────────────
 
@@ -36,13 +41,24 @@ function connectNativeHost() {
     return;
   }
 
-  nativePort.onMessage.addListener((msg: { type: string; domain?: string; paths?: string[] }) => {
+  nativePort.onMessage.addListener((msg: { type: string; domain?: string; paths?: string[]; serverVersion?: string }) => {
     // Handle sources:set directly in service worker — write to storage immediately
     if (msg.type === 'sources:set' && msg.domain && msg.paths) {
       chrome.storage.local.set({ [`ccb-sources-${msg.domain}`]: msg.paths });
       console.log('[CCB-SW] Sources stored for', msg.domain, msg.paths.length, 'paths');
     }
-    // Forward all messages to side panel
+    // Cache connection:ready and deliver it to a live side panel. We do NOT route
+    // it through the generic buffer — a late-connecting side panel gets it via the
+    // replay in onConnect instead, so it's delivered exactly once (no double-fire
+    // of the version-check decision tree).
+    if (msg.type === 'connection:ready') {
+      lastConnectionReady = { type: msg.type, serverVersion: msg.serverVersion };
+      if (sidePanelPort) {
+        try { sidePanelPort.postMessage(msg); } catch { /* side panel closed */ }
+      }
+      return;
+    }
+    // Forward all other messages to side panel
     notifySidePanel(msg);
   });
 
@@ -50,6 +66,9 @@ function connectNativeHost() {
     const error = chrome.runtime.lastError?.message ?? 'disconnected';
     console.error('[CCB-SW] Native host disconnected:', error);
     nativePort = null;
+    // The cached version belonged to the host that just died — drop it so a
+    // reconnecting side panel waits for the fresh host's real connection:ready.
+    lastConnectionReady = null;
     notifySidePanel({ type: '_native_status', connected: false, error });
 
     // Retry after 5 seconds
@@ -142,9 +161,12 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'sidepanel') {
     sidePanelPort = port;
 
-    // If native host is already connected, send connection:ready to sidepanel
-    if (nativePort) {
-      port.postMessage({ type: 'connection:ready', serverVersion: '0.1.0' });
+    // Replay the host's real connection:ready (cached) to this — possibly
+    // reconnecting — side panel. If the host is alive but ready hasn't arrived
+    // yet, it's forwarded as soon as it does (sidePanelPort is now set), so we
+    // never fabricate a version here.
+    if (nativePort && lastConnectionReady) {
+      port.postMessage(lastConnectionReady);
     }
 
     // Send target tab info

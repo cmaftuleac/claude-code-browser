@@ -1,0 +1,11 @@
+{"ts":"2026-05-31T14:00:00Z","level":"info","msg":"server started","port":3000}
+{"ts":"2026-05-31T14:00:01Z","level":"info","msg":"db connected","host":"localhost","db":"app"}
+{"ts":"2026-05-31T14:00:12Z","level":"warn","msg":"slow query","ms":842,"sql":"SELECT * FROM orders WHERE..."}
+{"ts":"2026-05-31T14:00:15Z","level":"info","msg":"user login","user":"avery@example.com","ip":"203.0.113.42"}
+{"ts":"2026-05-31T14:01:03Z","level":"error","msg":"payment failed","order":"ord_91842","reason":"card declined","retry":1}
+{"ts":"2026-05-31T14:01:05Z","level":"info","msg":"retry scheduled","order":"ord_91842","in_ms":5000}
+{"ts":"2026-05-31T14:01:10Z","level":"info","msg":"payment succeeded","order":"ord_91842","amount":129.95,"currency":"USD"}
+{"ts":"2026-05-31T14:02:22Z","level":"info","msg":"shipment created","order":"ord_91842","carrier":"UPS","tracking":"1Z999AA10123456784"}
+{"ts":"2026-05-31T14:05:18Z","level":"info","msg":"healthcheck ok","uptime_s":318}
+{"ts":"2026-05-31T14:10:00Z","level":"info","msg":"scheduled job started","job":"send-digest"}
+{"ts":"2026-05-31T14:10:02Z","level":"info","msg":"scheduled job done","job":"send-digest","sent":1247}

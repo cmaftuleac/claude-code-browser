@@ -1,0 +1,34 @@
+{
+  "name": "@claude-code-browser/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Corneliu Maftuleac",
+    "url": "https://x.com/cmaftuleac"
+  },
+  "contributors": [
+    "Fineguide.AI (https://fineguide.ai)"
+  ],
+  "description": "Transport-agnostic Claude Agent SDK orchestration shared by the native-messaging host and the Electron desktop app.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.87"
+  },
+  "devDependencies": {
+    "@claude-code-browser/shared": "*",
+    "@types/node": "^22.0.0"
+  }
+}

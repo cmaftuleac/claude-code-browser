@@ -41,6 +41,14 @@ The Chrome extension and the npm `claude-code-browser` package work together. Th
 - Chrome Web Store uploads are done through the developer dashboard at https://chrome.google.com/webstore/devconsole — paste new ZIP, update store listing, submit for review.
 - After every release, tag in git: `git tag v<version> && git push origin v<version>`.
 
+## UI rules (apps/desktop, and any future user-facing surface)
+
+**Animations are mandatory.** Every show/hide, mount/unmount, open/close, surface switch, panel collapse/expand, list add/remove — must be **properly animated**, never snap. This is part of the "industrial-grade, modern, sleek" quality bar for the product.
+
+- Use **framer-motion** (`AnimatePresence` for mount/unmount; `motion.*` for transitions; `layout` for layout shifts). CSS-only transitions are fine for hover/focus but cannot handle React unmount gracefully.
+- Sensible defaults: 140–220ms `cubic-bezier(0.4, 0, 0.2, 1)`; opacity + small scale/translate combo on entrance; never zero-duration.
+- Apply to: task list items, surface (ModePills) switching, collapsible cards (tool/thinking), Composer command dropdown, StateRail sections, code-surface tab swaps, Browser inspector mount, toasts, modals.
+
 ## Things that have bitten this project before
 
 - **Pasting npm tokens into chat.** Treat any token shared in a transcript as compromised; rotate immediately at https://www.npmjs.com/settings/~/tokens.

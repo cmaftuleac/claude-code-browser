@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f1eadc"/>
+      <stop offset="100%" stop-color="#d97757"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="32" ry="32" fill="url(#g)"/>
+  <g fill="none" stroke="#2a2118" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 88 L128 56 L192 88 L192 168 L128 200 L64 168 Z"/>
+    <path d="M64 88 L128 120 L192 88"/>
+    <path d="M128 120 L128 200"/>
+  </g>
+  <text x="128" y="240" text-anchor="middle" font-family="Geist, system-ui, sans-serif" font-size="18" font-weight="600" fill="#2a2118">
+    Sample SVG
+  </text>
+</svg>

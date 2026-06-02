@@ -7,8 +7,10 @@
 
 import { readNativeMessage, writeNativeMessage, log } from './native-io.js';
 import { readdirSync, readFileSync, existsSync, unlinkSync } from 'node:fs';
-import { join, basename } from 'node:path';
-import { homedir } from 'node:os';
+import { join, basename, dirname } from 'node:path';
+import { homedir, platform } from 'node:os';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 
 // Prevent crashes
@@ -21,8 +23,24 @@ function send(msg: ServerMessage): void {
   writeNativeMessage(msg);
 }
 
+/** Read the host's real version from its own package.json. Published layout is
+ *  dist/host.js → ../package.json (the build writes dist/package.json as a
+ *  {"type":"module"} stub with no version, so we must read one level up). Falls
+ *  back to '0.0.0' so a failed read fails safe to the extension's manual-update
+ *  path rather than a false "compatible". */
+function resolveHostVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require('../package.json') as { version?: string };
+    if (typeof pkg.version === 'string' && pkg.version) return pkg.version;
+  } catch { /* fall through to fallback */ }
+  return '0.0.0';
+}
+
+const HOST_VERSION = resolveHostVersion();
+
 // Signal ready immediately — before any heavy imports
-send({ type: 'connection:ready', serverVersion: '0.1.0' });
+send({ type: 'connection:ready', serverVersion: HOST_VERSION });
 
 // Check for pending source configs from /browse skill — on startup and every 2 seconds
 checkPendingSources();
@@ -167,6 +185,109 @@ async function getSessionStore() {
 
 // browserResponseHandler is no longer needed — responses go through agent manager IPC
 
+// ── Self-Update ─────────────────────────────────────────────────────────────
+
+interface StepResult { ok: boolean; code: number | null; stdout: string; stderr: string; timedOut: boolean; }
+
+/** Spawn a command, capture stdout/stderr (bounded), with a hard timeout. The
+ *  Chrome-spawned host has a minimal PATH (no nvm), so we prepend node's own dir
+ *  to PATH — npm and our bin live there as siblings of `process.execPath`, and
+ *  npm's `#!/usr/bin/env node` launcher then resolves node. */
+function runStep(cmd: string, args: string[], timeoutMs: number): Promise<StepResult> {
+  return new Promise((resolve) => {
+    const nodeDir = dirname(process.execPath);
+    const sep = platform() === 'win32' ? ';' : ':';
+    let stdout = '';
+    let stderr = '';
+    let child;
+    try {
+      child = spawn(cmd, args, {
+        env: { ...process.env, PATH: `${nodeDir}${sep}${process.env.PATH ?? ''}` },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: platform() === 'win32', // needed to run npm.cmd / *.cmd shims
+      });
+    } catch (e) {
+      resolve({ ok: false, code: null, stdout: '', stderr: String(e), timedOut: false });
+      return;
+    }
+    child.stdout?.on('data', (b: Buffer) => { stdout = (stdout + b.toString()).slice(-4000); });
+    child.stderr?.on('data', (b: Buffer) => { stderr = (stderr + b.toString()).slice(-4000); });
+    const timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+      resolve({ ok: false, code: null, stdout, stderr, timedOut: true });
+    }, timeoutMs);
+    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, code: null, stdout, stderr: String(e), timedOut: false }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ ok: code === 0, code, stdout, stderr, timedOut: false }); });
+  });
+}
+
+function classifyNpmFailure(s: StepResult): string {
+  if (s.timedOut) return 'npm timed out — check your network connection';
+  const tail = `${s.stdout}\n${s.stderr}`;
+  if (/EACCES|EPERM|permission denied/i.test(tail)) return 'permission denied — a system Node install may need sudo to update globally';
+  return 'npm install failed: ' + tail.replace(/\s+/g, ' ').trim().slice(-200);
+}
+
+/** Update the globally-installed claude-code-browser to `targetVersion` and re-wire
+ *  the native-messaging manifest, then exit so Chrome respawns the fresh host. */
+async function handleHostUpdate(targetVersion: string): Promise<void> {
+  // Validate before interpolating into an npm spec (no arg/shell injection).
+  if (!/^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$/.test(targetVersion)) {
+    send({ type: 'host:update:result', success: false, reason: 'invalid target version' });
+    return;
+  }
+
+  const isWin = platform() === 'win32';
+  const nodeDir = dirname(process.execPath);
+  const npmBin = join(nodeDir, isWin ? 'npm.cmd' : 'npm');
+
+  // Step 1: install the target version globally.
+  log(`host:update → npm i -g claude-code-browser@${targetVersion}`);
+  const step1 = await runStep(npmBin, ['i', '-g', `claude-code-browser@${targetVersion}`], 180_000);
+  if (!step1.ok) {
+    log('host:update npm install failed', step1.stderr);
+    send({ type: 'host:update:result', success: false, reason: classifyNpmFailure(step1), installedVersion: HOST_VERSION });
+    return; // stay alive — extension shows manual instructions
+  }
+
+  // Step 2: re-run the freshly-installed installer to restore the absolute-node
+  // shebang npm just reset, and to repoint the manifest at the new global host
+  // (covers npx-cache installs whose manifest pointed elsewhere). This reuses all
+  // of install.ts's manifest/shebang/extension-detection logic.
+  //
+  // NOTE: `claude-code-browser install` calls killStaleHosts() (pkill of our own
+  // host.js) AFTER it has rewritten the manifest+shebang, so this process may be
+  // SIGKILLed before the lines below run. That's fine: either path ends with us
+  // dead and Chrome respawning the updated host. The success message is best-effort.
+  const ccbBin = join(nodeDir, isWin ? 'claude-code-browser.cmd' : 'claude-code-browser');
+  let step2: StepResult;
+  if (existsSync(ccbBin)) {
+    log('host:update → claude-code-browser install');
+    step2 = await runStep(ccbBin, ['install'], 60_000);
+  } else {
+    // Fallback: global bin dir differs from node's dir (custom npm prefix). Locate
+    // the freshly-installed installer via `npm root -g` and run it with node.
+    const rootRes = await runStep(npmBin, ['root', '-g'], 30_000);
+    const root = rootRes.stdout.split('\n').map((l) => l.trim()).filter(Boolean).pop() ?? '';
+    const installJs = root ? join(root, 'claude-code-browser', 'dist', 'install.js') : '';
+    if (!installJs || !existsSync(installJs)) {
+      send({ type: 'host:update:result', success: false, reason: 'could not locate installer after update' });
+      return;
+    }
+    log('host:update → node install.js install');
+    step2 = await runStep(process.execPath, [installJs, 'install'], 60_000);
+  }
+  if (!step2.ok) {
+    send({ type: 'host:update:result', success: false, reason: 're-wire failed: ' + `${step2.stdout}\n${step2.stderr}`.replace(/\s+/g, ' ').trim().slice(-200) });
+    return;
+  }
+
+  // Success (reached only if killStaleHosts didn't already kill us). Flush the
+  // framed message, then exit so the next Chrome connect spawns the new host.
+  send({ type: 'host:update:result', success: true, installedVersion: targetVersion });
+  setTimeout(() => process.exit(0), 200);
+}
+
 // ── Message Loop ──────────────────────────────────────────────────────────
 
 async function main() {
@@ -265,6 +386,10 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
       am.sendBrowserResponse(msg.requestId, msg.result, msg.error);
       break;
     }
+
+    case 'host:update':
+      await handleHostUpdate(msg.targetVersion);
+      break;
   }
 }
 
