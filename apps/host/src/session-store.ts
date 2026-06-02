@@ -4,11 +4,15 @@
 
 import { listSessions, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionInfo, SessionMessage, SessionMessageBlock } from '@claude-code-browser/shared';
+import { normalizeDir } from './project-dir.js';
 
 export class SessionStore {
-  async getSessions(): Promise<SessionInfo[]> {
+  /** List Claude Code's sessions for a project directory. Scoped to `dir` so the
+   *  browser sees exactly that project's sessions (the same ones `claude` shows in
+   *  a terminal for that folder) — no machine-wide list, no artificial cap. */
+  async getSessions(dir?: string): Promise<SessionInfo[]> {
     try {
-      const sessions = await listSessions({ limit: 50 });
+      const sessions = await listSessions(dir ? { dir: normalizeDir(dir) } : {});
       return sessions.map((s) => {
         // Prefer firstPrompt (literal first user message, multi-line preserved) over
         // summary (often newline-collapsed, which defeats line-based metadata stripping).

@@ -8,7 +8,7 @@
 /** Minimum host version this extension build works with. A host >= this is left
  *  untouched; an older host is silently upgraded to exactly this version
  *  (upgrade-only — we never downgrade a newer host). */
-export const MIN_HOST_VERSION = '0.1.15';
+export const MIN_HOST_VERSION = '0.1.18';
 
 /** First host version that understands the `host:update` message. Pinned forever
  *  at that floor — any host >= this can be told to self-update. A host below it
