@@ -5,6 +5,7 @@ import { useChatStore, bumpStat, type ChatMessage } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
 import { MIN_HOST_VERSION, SELF_UPDATE_MIN_VERSION } from '../config';
 import { cmpSemver } from '../semver';
+import { MY_TAB_ID } from '../tab';
 
 // Watchdog for an in-flight silent host:update. Module-level so it survives the
 // hook re-running on reconnect. If neither host:update:result nor a fresh
@@ -31,22 +32,23 @@ function armUpdateWatchdog() {
   }, UPDATE_WATCHDOG_MS);
 }
 
-/** Get target tab URL and domain from the pinned tab */
-function getTargetTabInfo(callback: (url: string, domain: string) => void) {
-  const tabId = useConnectionStore.getState().targetTabId;
-  if (!tabId) {
-    callback('', 'unknown');
-    return;
-  }
+/** Resolve the project context for the pinned tab: `origin` is host:port (the
+ *  per-website key, port included so localhost:3000 ≠ localhost:5173), and
+ *  `projectDir` is the site's configured project folder (sources[0]) or undefined.
+ *  origin is '' when there's no pinned http(s) tab (e.g. chrome:// page). */
+function getProjectContext(callback: (ctx: { origin: string; projectDir?: string }) => void) {
+  // Use this panel's own tab directly (not the store) so it's correct even before
+  // the navigation-refresh effect has populated targetTabId.
+  const tabId = MY_TAB_ID;
+  if (tabId == null) { callback({ origin: '' }); return; }
   chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) {
-      callback('', 'unknown');
-      return;
-    }
-    const url = tab.url ?? '';
-    let domain = 'unknown';
-    try { domain = new URL(url).hostname; } catch { /* */ }
-    callback(url, domain);
+    let origin = '';
+    try { origin = new URL(tab?.url ?? '').host; } catch { /* not a parseable URL */ }
+    if (chrome.runtime.lastError || !origin) { callback({ origin: '' }); return; }
+    chrome.storage.local.get(`ccb-sources-${origin}`, (result) => {
+      const paths = (result[`ccb-sources-${origin}`] as string[] | undefined) ?? [];
+      callback({ origin, projectDir: paths[0] });
+    });
   });
 }
 
@@ -79,6 +81,18 @@ export function useNativePort() {
 
     const port = chrome.runtime.connect({ name: 'sidepanel' });
     portRef.current = port;
+
+    // Identify our tab to the SW first — this pairs us with our dedicated host
+    // (spawning it on first connect, reusing it on reload).
+    if (MY_TAB_ID != null) {
+      try { port.postMessage({ type: '_panel_init', tabId: MY_TAB_ID }); } catch { /* */ }
+    }
+
+    // Ask the host for this website's sessions, scoped by its project folder.
+    // Claude Code is the source of truth — the host lists listSessions({ dir }).
+    const requestSessionList = () =>
+      getProjectContext(({ origin, projectDir }) =>
+        send({ type: 'session:list', origin, projectDir }));
 
     type InternalMessage =
       | { type: '_native_status'; connected?: boolean; error?: string }
@@ -116,7 +130,7 @@ export function useNativePort() {
             clearUpdateWatchdog();
             cs.resetUpdateAttempt();
             setStatus('connected');
-            send({ type: 'session:list' });
+            requestSessionList();
             break;
           }
 
@@ -153,43 +167,20 @@ export function useNativePort() {
         }
 
         case 'session:list': {
-          // Filter sessions to only those registered for the target tab's domain
-          getTargetTabInfo((_url, domain) => {
-            if (!domain || domain === 'unknown') {
-              store.setSessions(msg.sessions);
-              return;
-            }
-            chrome.storage.local.get(`ccb-sessions-${domain}`, (result) => {
-              const domainSessionIds = (result[`ccb-sessions-${domain}`] as string[] | undefined) ?? [];
-              if (domainSessionIds.length === 0) {
-                store.setSessions([]);
-              } else {
-                const domainSet = new Set(domainSessionIds);
-                store.setSessions(msg.sessions.filter((s) => domainSet.has(s.id)));
-              }
-            });
-          });
+          // Host already scoped the list to this website's project folder
+          // (single source of truth = Claude Code on disk). No client-side filter.
+          store.setSessions(msg.sessions);
           break;
         }
 
         case 'session:created': {
+          // Migrate the pending bucket onto the real Claude Code session id, then
+          // refresh the (project-scoped) list. No extension-side session registry.
           if (msg.clientRequestId) {
             store.migratePendingToSession(msg.clientRequestId, msg.sessionId);
           }
           bumpStat('sessionCount');
-          // Register this session for the target tab's domain, then refresh session list
-          getTargetTabInfo((_url, domain) => {
-            if (!domain || domain === 'unknown') return;
-            const key = `ccb-sessions-${domain}`;
-            chrome.storage.local.get(key, (result) => {
-              const ids = (result[key] as string[] | undefined) ?? [];
-              if (!ids.includes(msg.sessionId)) {
-                chrome.storage.local.set({ [key]: [...ids, msg.sessionId] }, () => {
-                  send({ type: 'session:list' });
-                });
-              }
-            });
-          });
+          requestSessionList();
           break;
         }
 
@@ -271,7 +262,7 @@ export function useNativePort() {
           store.completeMessage(key, msg.messageId, msg.result);
           store.setSessionRunning(key, false);
           // Refresh session list (title may have been generated)
-          send({ type: 'session:list' });
+          requestSessionList();
           break;
         }
 
@@ -349,6 +340,25 @@ export function useNativePort() {
       portRef.current?.disconnect();
     };
   }, [connect]);
+
+  // Track THIS panel's own tab (from the URL), and refresh its url on navigation.
+  // Replaces the SW's old global _target_tab push — each panel watches only its tab.
+  useEffect(() => {
+    const myTab = MY_TAB_ID;
+    if (myTab == null) return;
+    const refresh = () => {
+      chrome.tabs.get(myTab, (tab) => {
+        if (chrome.runtime.lastError || !tab) return;
+        useConnectionStore.getState().setTargetTab(myTab, tab.url ?? '');
+      });
+    };
+    refresh();
+    const onUpdated = (tabId: number, info: chrome.tabs.TabChangeInfo) => {
+      if (tabId === myTab && (info.status === 'complete' || info.url)) refresh();
+    };
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    return () => chrome.tabs.onUpdated.removeListener(onUpdated);
+  }, []);
 
   return { send };
 }

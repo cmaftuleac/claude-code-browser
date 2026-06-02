@@ -127,6 +127,51 @@ body {
   padding: 0 8px 8px;
 }
 
+.session-list__empty {
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #8b8b9a;
+  text-align: center;
+}
+
+.session-list__blocked {
+  margin: 6px 4px;
+  padding: 8px;
+  border: 1px solid #b4540060;
+  background: #b4540018;
+  border-radius: 6px;
+}
+
+.session-list__blocked-msg {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #d08a4a;
+}
+
+.session-list__blocked-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.session-list__blocked-btn {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  border: 1px solid #ffffff20;
+  background: #ffffff10;
+  color: inherit;
+  cursor: pointer;
+}
+
+.session-list__blocked-btn--primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+}
+
 .session-list__new-chat {
   display: block;
   width: 100%;

@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { MY_TAB_ID } from '../tab';
 
 const STORAGE_KEY_PREFIX = 'ccb-sources-';
 const PANEL_KEY = 'ccb-sources-panel-collapsed';
 
 function getDomainKey(): Promise<string> {
   return new Promise((resolve) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    // Use THIS panel's own tab (not the active tab) so each panel edits its own
+    // site's sources. host = hostname:port — port included so localhost:3000 and
+    // localhost:5173 are different projects.
+    if (MY_TAB_ID == null) { resolve('unknown'); return; }
+    chrome.tabs.get(MY_TAB_ID, (tab) => {
+      if (chrome.runtime.lastError || !tab) { resolve('unknown'); return; }
       try {
-        const url = new URL(tabs[0]?.url ?? '');
-        resolve(url.hostname || 'unknown');
+        resolve(new URL(tab.url ?? '').host || 'unknown');
       } catch {
         resolve('unknown');
       }

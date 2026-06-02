@@ -51,12 +51,19 @@ export type ClientMessage =
       anchors?: ElementAnchor[];
       images?: string[];
       url: string;
+      /** Page origin (host:port) — the per-website key. The host resolves the project
+       *  folder from `projectDir` (configured) or a default derived from this origin. */
+      origin?: string;
+      /** The project folder for this origin (sources[0]); becomes the session's cwd. */
       projectDir?: string;
       sources?: string[];  // additional project directories
       /** Visual edits made in the desktop editor, to be persisted to source. */
       editJournal?: EditJournalEntry[];
     }
-  | { type: 'session:list' }
+  /** List sessions for the current website. The host scopes to the project folder
+   *  resolved from origin (host:port) + the configured projectDir — Claude Code's
+   *  on-disk sessions are the single source of truth, no extension-side registry. */
+  | { type: 'session:list'; origin?: string; projectDir?: string }
   | { type: 'session:resume'; sessionId: string }
   | { type: 'agent:interrupt'; sessionId: string }
   /** Ask the host to (un)install itself to a specific npm version and re-wire its

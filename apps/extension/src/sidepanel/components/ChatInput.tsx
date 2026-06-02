@@ -9,7 +9,7 @@ const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
 const SPINNER_INTERVAL_MS = 120;
 import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
 import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
-import { useConnectionStore } from '../stores/connection-store';
+import { MY_TAB_ID } from '../tab';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import type { SlashCommand } from './SlashCommandMenu';
@@ -158,8 +158,13 @@ export function ChatInput({ send }: Props) {
     }
 
     addUserMessage(message, anchors, imgs);
-    const tid = useConnectionStore.getState().targetTabId;
+    const tid = MY_TAB_ID;
     const sendMsg = (url: string) => {
+      // origin (host:port) is the per-website key; projectDir (sources[0]) is the
+      // project folder → the session's cwd. The host resolves a per-origin default
+      // folder when none is configured.
+      let origin = '';
+      try { origin = new URL(url).host; } catch { /* not a parseable URL */ }
       send({
         type: 'chat:send',
         sessionId: sessionIdForSend,
@@ -168,6 +173,8 @@ export function ChatInput({ send }: Props) {
         anchors,
         images: imgs,
         url,
+        origin: origin || undefined,
+        projectDir: sourcePaths[0],
         sources: sourcePaths.length > 0 ? sourcePaths : undefined,
       });
     };

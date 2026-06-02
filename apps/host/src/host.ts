@@ -11,6 +11,7 @@ import { join, basename, dirname } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { resolveProjectDir } from './project-dir.js';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 
 // Prevent crashes
@@ -48,30 +49,28 @@ setInterval(checkPendingSources, 2000);
 
 log('Host started, waiting for messages');
 
-let lastPendingContent = '';
-
 function checkPendingSources() {
   try {
-    const pendingFile = '/tmp/ccb-sources/pending.json';
-    if (!existsSync(pendingFile)) {
-      lastPendingContent = '';
-      return;
+    const dir = '/tmp/ccb-sources';
+    if (!existsSync(dir)) return;
+    // Consume per-domain pending files written by the /browse skill. With one host
+    // process per panel, N hosts poll this dir — so we consume-and-delete in one
+    // pass (whichever host grabs a file first wins; others find it gone). A single
+    // send suffices because the SW persists sources keyed by domain in shared
+    // chrome.storage, which the panel viewing that domain reads regardless of which
+    // host forwarded it. (Matches both legacy `pending.json` and `pending-<dom>.json`.)
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith('pending') || !name.endsWith('.json')) continue;
+      const file = join(dir, name);
+      try {
+        const data = JSON.parse(readFileSync(file, 'utf-8'));
+        if (data.domain && Array.isArray(data.paths)) {
+          send({ type: 'sources:set', domain: data.domain, paths: data.paths });
+        }
+        unlinkSync(file);
+      } catch { /* mid-write or already consumed by another host */ }
     }
-    const content = readFileSync(pendingFile, 'utf-8');
-    // Re-send even if same content (extension may not have received it yet)
-    const data = JSON.parse(content);
-    if (data.domain && Array.isArray(data.paths)) {
-      send({ type: 'sources:set', domain: data.domain, paths: data.paths });
-      // Only delete after sending successfully for a few cycles
-      if (content === lastPendingContent) {
-        // Same content seen twice = extension likely got it, safe to delete
-        try { unlinkSync(pendingFile); } catch { /* */ }
-        lastPendingContent = '';
-      } else {
-        lastPendingContent = content;
-      }
-    }
-  } catch { /* no pending sources */ }
+  } catch { /* no pending sources dir */ }
 }
 
 // ── Slash Command Scanner ─────────────────────────────────────────────────
@@ -341,6 +340,7 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
         anchors: msg.anchors,
         images: msg.images,
         url: msg.url,
+        origin: msg.origin,
         projectDir: msg.projectDir,
         sources: msg.sources,
       }).catch((err) => log('sendMessage error:', err instanceof Error ? err.message : String(err)));
@@ -348,8 +348,15 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
     }
 
     case 'session:list': {
+      // Scope to the website's project folder. Unknown origin (chrome:// / no tab)
+      // → empty list; never leak the machine-wide all-projects list.
+      const dir = resolveProjectDir(msg.origin, msg.projectDir);
+      if (!dir) {
+        send({ type: 'session:list', sessions: [] });
+        break;
+      }
       const ss = await getSessionStore();
-      const sessions = await ss.getSessions().catch(() => []);
+      const sessions = await ss.getSessions(dir).catch(() => []);
       send({ type: 'session:list', sessions });
       break;
     }

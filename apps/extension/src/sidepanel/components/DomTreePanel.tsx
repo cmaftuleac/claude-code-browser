@@ -2,28 +2,9 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDomTreeStore } from '../stores/dom-tree-store';
 import { useChatStore } from '../stores/chat-store';
 import type { DomTreeNode } from '../stores/dom-tree-store';
+import { MY_TAB_ID, sendToMyTab } from '../tab';
 
 const STORAGE_KEY = 'ccb-dom-panel-collapsed';
-
-function sendToContentScript(message: Record<string, unknown>, callback?: (response: unknown) => void) {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tabId = tabs[0]?.id;
-    const url = tabs[0]?.url ?? '';
-    // Don't send to chrome:// or extension pages
-    if (!tabId || url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-      callback?.(null);
-      return;
-    }
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        // Content script not injected on this page
-        callback?.(null);
-        return;
-      }
-      callback?.(response);
-    });
-  });
-}
 
 export function DomTreePanel() {
   const [panelCollapsed, setPanelCollapsed] = useState(true);
@@ -57,7 +38,7 @@ export function DomTreePanel() {
     const store = useDomTreeStore.getState();
     if (store.isLoading) return;
     store.setLoading(true);
-    sendToContentScript({ type: 'GET_DOM_TREE' }, (response: unknown) => {
+    sendToMyTab({ type: 'GET_DOM_TREE' }, (response: unknown) => {
       store.setLoading(false);
       const res = response as { tree?: DomTreeNode } | null;
       if (res?.tree) {
@@ -74,24 +55,15 @@ export function DomTreePanel() {
     if (!panelCollapsed) fetchTree();
   }, [panelCollapsed, fetchTree]);
 
-  // Re-fetch tree on tab switch or navigation (only when panel is open)
+  // Re-fetch tree when OUR tab navigates (only when panel is open). Scoped to this
+  // panel's own tab — not the active tab — so independent panels don't cross-fetch.
   useEffect(() => {
     if (panelCollapsed) return;
-
-    const onActivated = () => {
-      // Small delay to let the tab become active
-      setTimeout(fetchTree, 200);
+    const onUpdated = (tabId: number, info: chrome.tabs.TabChangeInfo) => {
+      if (tabId === MY_TAB_ID && info.status === 'complete') fetchTree();
     };
-    const onUpdated = (_tabId: number, info: chrome.tabs.TabChangeInfo) => {
-      if (info.status === 'complete') fetchTree();
-    };
-
-    chrome.tabs.onActivated.addListener(onActivated);
     chrome.tabs.onUpdated.addListener(onUpdated);
-    return () => {
-      chrome.tabs.onActivated.removeListener(onActivated);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-    };
+    return () => chrome.tabs.onUpdated.removeListener(onUpdated);
   }, [panelCollapsed, fetchTree]);
 
   // Scroll to selected node
@@ -138,7 +110,7 @@ export function DomTreePanel() {
   }, []);
 
   const handleMouseEnter = useCallback((node: DomTreeNode) => {
-    sendToContentScript({
+    sendToMyTab({
       type: 'HIGHLIGHT_ELEMENT',
       selector: node.anchor.selector,
       xpath: node.anchor.xpath,
@@ -146,7 +118,7 @@ export function DomTreePanel() {
   }, []);
 
   const handleMouseLeave = useCallback(() => {
-    sendToContentScript({ type: 'REMOVE_HIGHLIGHT' });
+    sendToMyTab({ type: 'REMOVE_HIGHLIGHT' });
   }, []);
 
   return (

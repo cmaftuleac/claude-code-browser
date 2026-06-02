@@ -15,7 +15,9 @@ Open `$ARGUMENTS` in Chrome for inspection.
 Register all workspace directories as sources:
 ```bash
 URL="$ARGUMENTS"
-DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|[:/].*||')
+# Keep the port: strip scheme and path/query/fragment, but NOT the :port — the
+# extension keys sources by host:port (localhost:3000 ≠ localhost:5173).
+DOMAIN=$(echo "$URL" | sed -E 's|^https?://||; s|[/?#].*||')
 [ -z "$DOMAIN" ] && DOMAIN="$URL"
 mkdir -p /tmp/ccb-sources
 
@@ -25,7 +27,10 @@ for dir in $(ps aux | grep "claude.*add-dir" | grep -v grep | head -1 | grep -oE
   [ -d "$dir" ] && PATHS="$PATHS,\"$dir\""
 done
 
-echo "{\"domain\":\"$DOMAIN\",\"paths\":[$PATHS]}" > /tmp/ccb-sources/pending.json
+# Per-domain file (sanitized name) so concurrent host processes don't race on one
+# shared file. The host consumes pending-*.json files and forwards each.
+SAFE=$(echo "$DOMAIN" | sed -E 's/[^A-Za-z0-9.-]/-/g')
+echo "{\"domain\":\"$DOMAIN\",\"paths\":[$PATHS]}" > "/tmp/ccb-sources/pending-$SAFE.json"
 echo "Sources registered for $DOMAIN ($(echo "$PATHS" | tr ',' '\n' | wc -l | tr -d ' ') directories)"
 ```
 

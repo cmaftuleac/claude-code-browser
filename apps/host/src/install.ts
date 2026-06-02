@@ -279,6 +279,19 @@ function killStaleHosts(): void {
   }
 }
 
+/** Strip com.apple.quarantine from the installed package (macOS only). Needed
+ *  because an `npm i -g` triggered by the Chrome-spawned host inherits Chrome's
+ *  quarantine on every file, and Gatekeeper then blocks the unsigned bundled
+ *  ripgrep. Recursive over the package root so vendored binaries are covered. */
+function clearQuarantineMac(): void {
+  if (platform() !== 'darwin') return;
+  try {
+    const pkgRoot = resolve(__dirname, '..'); // dist/.. → package root
+    execSync(`xattr -dr com.apple.quarantine "${pkgRoot}"`, { stdio: 'ignore' });
+    ok('Cleared macOS quarantine on host binaries');
+  } catch { /* non-fatal — quarantine may not be present */ }
+}
+
 function printExtensionInstallInstructions(): void {
   if (!STORE_EXTENSION_ID) {
     info('Chrome extension: Load manually from apps/extension/dist/ (not yet on Chrome Web Store)');
@@ -330,6 +343,13 @@ function install(explicitId?: string): void {
 
   // Step 3b: Kill any running host so the new manifest path takes effect on next connect
   killStaleHosts();
+
+  // Step 3c: Clear macOS quarantine. When the silent auto-update runs `npm i -g`
+  // from the Chrome-spawned host, macOS stamps every installed file with
+  // com.apple.quarantine (attributed to Chrome) → Gatekeeper then blocks the
+  // unsigned bundled `rg` (ripgrep) the Claude Code CLI relies on. Strip it from
+  // the whole package (incl. node_modules vendor binaries) so the agent works.
+  clearQuarantineMac();
 
   // Step 4: Install /browse skill
   installSkill();

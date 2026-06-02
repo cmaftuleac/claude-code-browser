@@ -10,12 +10,13 @@ import type { ElementAnchor, ServerMessage } from '@claude-code-browser/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { spawn } from 'node:child_process';
 import { log } from './native-io.js';
+import { resolveProjectDir, normalizeDir } from './project-dir.js';
 
 /** Find the SDK's cli.js — a Node.js script version of Claude Code.
  *  We run this under Node.js instead of the Bun-compiled binary to avoid
@@ -43,6 +44,8 @@ export interface SendMessageParams {
   anchors?: ElementAnchor[];
   images?: string[];
   url: string;
+  /** Page origin (host:port); used to derive a per-website default project folder. */
+  origin?: string;
   projectDir?: string;
   sources?: string[];
 }
@@ -170,6 +173,9 @@ function sourcesEqual(a: string[], b: string[]): boolean {
 export class AgentManager {
   private ipcServer: NetServer | null = null;
   private ipcPort = 0;
+  /** Resolves once the IPC server is listening and this.ipcPort is set. Awaited
+   *  before spawning the agent process so CCB_IPC_PORT is never injected as 0. */
+  private ipcReady: Promise<void> = Promise.resolve();
   private ipcClients = new Set<Socket>();
   private projectDir: string | undefined;
   private liveSessions = new Map<string, LiveSession>();
@@ -205,12 +211,19 @@ export class AgentManager {
       socket.on('close', () => this.ipcClients.delete(socket));
       socket.on('error', () => this.ipcClients.delete(socket));
     });
-    this.ipcServer.listen(0, '127.0.0.1', () => {
-      const addr = this.ipcServer!.address();
-      this.ipcPort = typeof addr === 'object' && addr ? addr.port : 0;
-      log('IPC server listening on port', this.ipcPort);
-      const portFile = join(tmpdir(), 'ccb-ipc-port');
-      writeFile(portFile, String(this.ipcPort)).catch(() => {});
+    this.ipcReady = new Promise<void>((resolve) => {
+      this.ipcServer!.listen(0, '127.0.0.1', () => {
+        const addr = this.ipcServer!.address();
+        this.ipcPort = typeof addr === 'object' && addr ? addr.port : 0;
+        log('IPC server listening on port', this.ipcPort);
+        // Write the port file too (in addition to the CCB_IPC_PORT env). The env
+        // is the per-process channel (correct for multiple concurrent hosts), but
+        // it can be lost if the agent's shell sandbox strips env/TMPDIR; the file
+        // is the single-host fallback the agent's browser-cli reads from the same
+        // tmpdir. Written only after the port is known, so it's never stale-zero.
+        writeFile(join(tmpdir(), 'ccb-ipc-port'), String(this.ipcPort)).catch(() => {});
+        resolve();
+      });
     });
   }
 
@@ -248,6 +261,9 @@ CRITICAL RULES:
   }
 
   async sendMessage(params: SendMessageParams): Promise<void> {
+    // Ensure the IPC server is listening (this.ipcPort resolved) before any agent
+    // process spawns, so CCB_IPC_PORT is injected with the real port, not 0.
+    await this.ipcReady;
     // Save attached images to disk and append paths to the user message.
     if (params.images && params.images.length > 0) {
       const imgDir = join(tmpdir(), 'ccb-images');
@@ -257,7 +273,8 @@ CRITICAL RULES:
         const match = params.images[i].match(/^data:image\/(\w+);base64,(.+)$/);
         if (match) {
           const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-          const filePath = join(imgDir, `img-${Date.now()}-${i}.${ext}`);
+          // pid + random keep names unique across concurrent host processes.
+          const filePath = join(imgDir, `img-${process.pid}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${i}.${ext}`);
           await writeFile(filePath, Buffer.from(match[2], 'base64'));
           paths.push(filePath);
         }
@@ -299,7 +316,20 @@ CRITICAL RULES:
   }
 
   private createLiveSession(params: SendMessageParams): LiveSession {
-    const cwd = params.projectDir ?? this.projectDir ?? params.sources?.[0] ?? process.cwd();
+    // The project folder is the session's cwd, which determines its Claude Code
+    // session bucket. Resolve to a normalized absolute path so the cwd used here
+    // encodes to the same bucket that listSessions({ dir }) reads later. Default to
+    // a per-origin folder (never the host's install dir) when nothing is configured.
+    const cwd = normalizeDir(
+      params.projectDir
+      ?? this.projectDir
+      ?? params.sources?.[0]
+      ?? resolveProjectDir(params.origin)
+      ?? process.cwd(),
+    );
+    // Materialize the folder when it's about to be used as a working dir (only here,
+    // never on listing). Idempotent for existing user folders.
+    try { mkdirSync(cwd, { recursive: true }); } catch { /* best-effort */ }
     const abortController = new AbortController();
     const pump = new AsyncMessagePump<SDKUserMessage>();
     const isNewSession = !params.sessionId;
@@ -314,7 +344,12 @@ CRITICAL RULES:
           const cliJs = findClaudeCliJs();
           const child = spawn(process.execPath, [cliJs, ...options.args], {
             cwd: options.cwd,
-            env: options.env,
+            // Inject THIS host's IPC port so the agent's Bash-spawned browser-cli
+            // (and the MCP server) talk to this process's IPC server — not some
+            // other host process's. Critical for per-panel host isolation: each
+            // host listens on its own ephemeral port; without this, browser tools
+            // would route to whichever host last wrote the shared port file.
+            env: { ...options.env, CCB_IPC_PORT: String(this.ipcPort) },
             signal: options.signal,
             stdio: ['pipe', 'pipe', 'pipe'],
           });

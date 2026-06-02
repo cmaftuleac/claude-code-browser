@@ -1,16 +1,28 @@
 const HOST_NAME = 'com.claude_code_browser';
-let nativePort: chrome.runtime.Port | null = null;
-let sidePanelPort: chrome.runtime.Port | null = null;
-let nativeMessages: unknown[] = []; // Buffer messages before sidepanel connects
-let targetTabId: number | null = null;
-// The host emits connection:ready (carrying its real version) exactly once per
-// spawn. Cache it so a side panel that connects (or reconnects) while the host is
-// already alive still learns the real version, instead of a fabricated stub.
-// Cleared on native disconnect so a stale version can't outlive its host.
-let lastConnectionReady: { type: string; serverVersion?: string } | null = null;
+
+/** One independent panel per tab: each tab pairs its side-panel port with its OWN
+ *  dedicated native host process. The service worker is just a 1:1 multiplexer of
+ *  these pairs — no global target tab, no shared host. */
+interface PanelPair {
+  tabId: number;
+  /** The side-panel port for this tab. Null while the panel is closed/reloading
+   *  (the host stays alive and we buffer until a panel reconnects). */
+  panelPort: chrome.runtime.Port | null;
+  /** This tab's dedicated native host connection. */
+  nativePort: chrome.runtime.Port | null;
+  /** The host's real connection:ready (carries serverVersion), replayed to a
+   *  reconnecting panel. */
+  lastConnectionReady: { type: string; serverVersion?: string } | null;
+  /** Native messages received while no panel is attached. */
+  buffer: unknown[];
+}
+
+const pairs = new Map<number, PanelPair>();
+const panelToTab = new WeakMap<chrome.runtime.Port, number>();
 
 // ── Disable side panel globally on startup ─────────────────────────────────
-
+// Panels are enabled per-tab on action click (with a ?tab=<id> path), so they
+// don't appear on tabs the user hasn't explicitly opened them on.
 chrome.sidePanel.setOptions({ enabled: false });
 
 // ── Initialize usage stats on install / update ─────────────────────────────
@@ -25,239 +37,135 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   });
 });
 
-// ── Native Host Connection ──────────────────────────────────────────────────
+// ── Per-pair native host connection ─────────────────────────────────────────
 
-function connectNativeHost() {
-  if (nativePort) return;
+function deliverToPanel(pair: PanelPair, msg: unknown) {
+  if (pair.panelPort) {
+    try { pair.panelPort.postMessage(msg); return; } catch { /* panel gone — buffer */ }
+  }
+  pair.buffer.push(msg);
+  if (pair.buffer.length > 100) pair.buffer.shift();
+}
 
-  console.log('[CCB-SW] Attempting connectNative to:', HOST_NAME);
-
+function connectNativeForPair(pair: PanelPair) {
+  let np: chrome.runtime.Port;
   try {
-    nativePort = chrome.runtime.connectNative(HOST_NAME);
-    console.log('[CCB-SW] connectNative returned port:', !!nativePort);
+    np = chrome.runtime.connectNative(HOST_NAME);
   } catch (e) {
-    console.error('[CCB-SW] Failed to connect to native host:', e);
-    notifySidePanel({ type: '_native_status', connected: false, error: String(e) });
+    deliverToPanel(pair, { type: '_native_status', connected: false, error: String(e) });
     return;
   }
+  pair.nativePort = np;
 
-  nativePort.onMessage.addListener((msg: { type: string; domain?: string; paths?: string[]; serverVersion?: string }) => {
-    // Handle sources:set directly in service worker — write to storage immediately
+  np.onMessage.addListener((msg: { type: string; domain?: string; paths?: string[]; serverVersion?: string }) => {
+    // sources:set is persisted to shared storage keyed by domain (any panel on
+    // that domain reads it) — handle once here.
     if (msg.type === 'sources:set' && msg.domain && msg.paths) {
       chrome.storage.local.set({ [`ccb-sources-${msg.domain}`]: msg.paths });
-      console.log('[CCB-SW] Sources stored for', msg.domain, msg.paths.length, 'paths');
     }
-    // Cache connection:ready and deliver it to a live side panel. We do NOT route
-    // it through the generic buffer — a late-connecting side panel gets it via the
-    // replay in onConnect instead, so it's delivered exactly once (no double-fire
-    // of the version-check decision tree).
+    // connection:ready: cache per-pair (replayed on panel reconnect) and deliver
+    // only to a live panel — never buffer, so a reconnecting panel doesn't get it
+    // twice (cache replay + buffer flush).
     if (msg.type === 'connection:ready') {
-      lastConnectionReady = { type: msg.type, serverVersion: msg.serverVersion };
-      if (sidePanelPort) {
-        try { sidePanelPort.postMessage(msg); } catch { /* side panel closed */ }
-      }
+      pair.lastConnectionReady = { type: msg.type, serverVersion: msg.serverVersion };
+      if (pair.panelPort) { try { pair.panelPort.postMessage(msg); } catch { /* closed */ } }
       return;
     }
-    // Forward all other messages to side panel
-    notifySidePanel(msg);
+    deliverToPanel(pair, msg);
   });
 
-  nativePort.onDisconnect.addListener(() => {
+  np.onDisconnect.addListener(() => {
     const error = chrome.runtime.lastError?.message ?? 'disconnected';
-    console.error('[CCB-SW] Native host disconnected:', error);
-    nativePort = null;
-    // The cached version belonged to the host that just died — drop it so a
-    // reconnecting side panel waits for the fresh host's real connection:ready.
-    lastConnectionReady = null;
-    notifySidePanel({ type: '_native_status', connected: false, error });
-
-    // Retry after 5 seconds
-    setTimeout(connectNativeHost, 5000);
+    pair.nativePort = null;
+    pair.lastConnectionReady = null;
+    deliverToPanel(pair, { type: '_native_status', connected: false, error });
+    // Reconnect only while this pair is still current (tab still open, not torn
+    // down). Guard against racing a teardown or a concurrent reconnect.
+    setTimeout(() => {
+      if (pairs.get(pair.tabId) === pair && !pair.nativePort) connectNativeForPair(pair);
+    }, 5000);
   });
 }
 
-function notifySidePanel(msg: unknown) {
-  if (sidePanelPort) {
-    try {
-      sidePanelPort.postMessage(msg);
-    } catch {
-      // Side panel not connected
+/** Bind a (re)connecting panel to its tab's pair, spawning the host on first use
+ *  and reusing it on panel reload. Host lifecycle is tied to the TAB, not the
+ *  panel port, so closing/reopening the panel (or Chrome unloading it on tab
+ *  switch) preserves in-flight work. */
+function registerPair(tabId: number, panelPort: chrome.runtime.Port) {
+  panelToTab.set(panelPort, tabId);
+  let pair = pairs.get(tabId);
+  if (pair) {
+    pair.panelPort = panelPort;
+    if (pair.lastConnectionReady) {
+      try { panelPort.postMessage(pair.lastConnectionReady); } catch { /* closed */ }
     }
-  } else {
-    // Buffer for when sidepanel connects
-    nativeMessages.push(msg);
-    if (nativeMessages.length > 50) nativeMessages.shift();
-  }
-}
-
-// ── Helper: send target tab info to side panel ─────────────────────────────
-
-function sendTargetTabInfo() {
-  if (!sidePanelPort || targetTabId == null) return;
-  chrome.tabs.get(targetTabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) return;
-    try {
-      sidePanelPort?.postMessage({
-        type: '_target_tab',
-        tabId: tab.id,
-        url: tab.url ?? '',
-        title: tab.title ?? '',
-      });
-    } catch { /* side panel closed */ }
-  });
-}
-
-// ── Helper: send message to target tab's content script ────────────────────
-
-function sendToTargetTab(
-  message: unknown,
-  callback?: (response: unknown) => void,
-) {
-  if (targetTabId == null) {
-    callback?.(null);
+    const buffered = pair.buffer;
+    pair.buffer = [];
+    for (const m of buffered) {
+      try { panelPort.postMessage(m); } catch { break; }
+    }
+    if (!pair.nativePort) connectNativeForPair(pair);
     return;
   }
-  const tabId = targetTabId;
+  pair = { tabId, panelPort, nativePort: null, lastConnectionReady: null, buffer: [] };
+  pairs.set(tabId, pair);
+  connectNativeForPair(pair);
+}
 
-  chrome.tabs.get(tabId, (tab) => {
-    if (chrome.runtime.lastError || !tab) {
-      callback?.(null);
-      return;
-    }
-    const url = tab.url ?? '';
-    if (url.startsWith('chrome://') || url.startsWith('chrome-extension://')) {
-      callback?.(null);
-      return;
-    }
-
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        // Content script not injected — inject it now, then retry
-        chrome.scripting.executeScript(
-          { target: { tabId }, files: ['content-script.js'] },
-          () => {
-            void chrome.runtime.lastError;
-            chrome.scripting.insertCSS(
-              { target: { tabId }, files: ['element-picker.css'] },
-              () => {
-                void chrome.runtime.lastError;
-                chrome.tabs.sendMessage(tabId, message, (retryResponse) => {
-                  callback?.(chrome.runtime.lastError ? null : retryResponse);
-                });
-              },
-            );
-          },
-        );
-        return;
-      }
-      callback?.(response);
-    });
-  });
+function teardownPair(tabId: number) {
+  const pair = pairs.get(tabId);
+  if (!pair) return;
+  pairs.delete(tabId);
+  // Disconnecting the native port closes the host's stdin → host main() hits EOF
+  // → process.exit(0). No leaked host processes.
+  try { pair.nativePort?.disconnect(); } catch { /* already gone */ }
+  try { pair.panelPort?.disconnect(); } catch { /* already gone */ }
 }
 
 // ── Side Panel Connection ───────────────────────────────────────────────────
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name === 'sidepanel') {
-    sidePanelPort = port;
+  if (port.name !== 'sidepanel') return;
 
-    // Replay the host's real connection:ready (cached) to this — possibly
-    // reconnecting — side panel. If the host is alive but ready hasn't arrived
-    // yet, it's forwarded as soon as it does (sidePanelPort is now set), so we
-    // never fabricate a version here.
-    if (nativePort && lastConnectionReady) {
-      port.postMessage(lastConnectionReady);
+  port.onMessage.addListener((msg: { type?: string; tabId?: number } & Record<string, unknown>) => {
+    // First message from a panel identifies its tab (authoritative — port.sender
+    // is unreliable for side panels).
+    if (msg.type === '_panel_init' && typeof msg.tabId === 'number') {
+      registerPair(msg.tabId, port);
+      return;
     }
-
-    // Send target tab info
-    sendTargetTabInfo();
-
-    // Flush any buffered messages
-    for (const msg of nativeMessages) {
-      try { port.postMessage(msg); } catch { break; }
+    // Forward everything else to this tab's host.
+    const tabId = panelToTab.get(port);
+    const pair = tabId != null ? pairs.get(tabId) : undefined;
+    if (pair?.nativePort) {
+      try { pair.nativePort.postMessage(msg); } catch { /* host gone */ }
     }
-    nativeMessages = [];
+  });
 
-    // Connect native host if not already
-    if (!nativePort) {
-      connectNativeHost();
-    }
-
-    port.onMessage.addListener((msg) => {
-      // Forward messages from side panel to native host
-      if (nativePort) {
-        try {
-          nativePort.postMessage(msg);
-        } catch {
-          console.error('[CCB-SW] Failed to send to native host');
-        }
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      sidePanelPort = null;
-    });
-  }
+  port.onDisconnect.addListener(() => {
+    const tabId = panelToTab.get(port);
+    panelToTab.delete(port);
+    if (tabId == null) return;
+    const pair = pairs.get(tabId);
+    // Keep the host alive (the tab is still open) and buffer until a panel
+    // reconnects. The host is only torn down when the tab closes.
+    if (pair && pair.panelPort === port) pair.panelPort = null;
+  });
 });
 
-// ── Extension Action — open side panel scoped to clicked tab ───────────────
+// ── Extension Action — open an independent panel for the clicked tab ────────
 
 chrome.action.onClicked.addListener((tab) => {
   if (tab.id == null) return;
-
-  const oldTabId = targetTabId;
-  targetTabId = tab.id;
-
-  // Enable on new tab and open — must be synchronous from the gesture
-  chrome.sidePanel.setOptions({ tabId: tab.id, path: 'sidepanel.html', enabled: true }, () => {
-    chrome.sidePanel.open({ tabId: tab.id! });
-    sendTargetTabInfo();
+  const tabId = tab.id;
+  // Pass the tab id to the panel via its URL so it knows which tab it serves.
+  // No old-tab disable — panels on other tabs stay open and independent.
+  chrome.sidePanel.setOptions({ tabId, path: `sidepanel.html?tab=${tabId}`, enabled: true }, () => {
+    void chrome.runtime.lastError;
+    chrome.sidePanel.open({ tabId });
   });
-
-  // Disable on old target tab (non-blocking)
-  if (oldTabId != null && oldTabId !== tab.id) {
-    chrome.sidePanel.setOptions({ tabId: oldTabId, enabled: false }, () => void chrome.runtime.lastError);
-  }
 });
 
-// ── Target tab closed ──────────────────────────────────────────────────────
+// ── Tab closed — tear down only that tab's pair (and its host) ──────────────
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  if (tabId === targetTabId) {
-    targetTabId = null;
-    notifySidePanel({ type: '_target_tab', tabId: null, url: '', title: '' });
-  }
-});
-
-// ── Target tab navigated — update URL ──────────────────────────────────────
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (tabId === targetTabId && changeInfo.status === 'complete') {
-    sendTargetTabInfo();
-  }
-});
-
-// ── Content Script Message Relay (uses targetTabId) ────────────────────────
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'ACTIVATE_PICKER') {
-    sendToTargetTab({ type: 'ACTIVATE_PICKER' });
-    return;
-  }
-
-  if (
-    message.type === 'GET_DOM_TREE' ||
-    message.type === 'GET_SUBTREE' ||
-    message.type === 'HIGHLIGHT_ELEMENT' ||
-    message.type === 'REMOVE_HIGHLIGHT'
-  ) {
-    sendToTargetTab(message, (response) => {
-      sendResponse(response);
-    });
-    return true;
-  }
-
-  if (message.type === 'ELEMENT_SELECTED' && sender.tab) {
-    return;
-  }
-});
+chrome.tabs.onRemoved.addListener((tabId) => teardownPair(tabId));
