@@ -10,6 +10,12 @@ let currentTarget: Element | null = null;
 
 let highlightOverlay: HTMLDivElement | null = null;
 
+/** Return the effective CSS zoom on <body> (defaults to 1). */
+function getBodyZoom(): number {
+  const z = parseFloat(getComputedStyle(document.body).zoom);
+  return (z && isFinite(z) && z > 0) ? z : 1;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'ACTIVATE_PICKER') {
     if (pickerActive) {
@@ -77,6 +83,9 @@ function activatePicker() {
 
   document.addEventListener('mousemove', onMouseMove, true);
   document.addEventListener('click', onClick, true);
+  // Also listen for pointerdown — disabled form elements (<button disabled>, etc.)
+  // suppress click/mousedown events entirely in Chrome, but pointer events still fire.
+  document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('keydown', onKeyDown, true);
 }
 
@@ -88,6 +97,7 @@ function deactivatePicker() {
   if (tooltip) { tooltip.remove(); tooltip = null; }
   document.removeEventListener('mousemove', onMouseMove, true);
   document.removeEventListener('click', onClick, true);
+  document.removeEventListener('pointerdown', onPointerDown, true);
   document.removeEventListener('keydown', onKeyDown, true);
 }
 
@@ -101,16 +111,20 @@ function onMouseMove(e: MouseEvent) {
   currentTarget = target;
 
   const rect = target.getBoundingClientRect();
+  // Compensate for CSS zoom on <body>: position:fixed values are scaled by
+  // the zoom, but getBoundingClientRect() returns viewport coords, so we
+  // must divide to cancel the zoom factor.
+  const zoom = getBodyZoom();
   if (overlay) {
-    overlay.style.top = `${rect.top}px`;
-    overlay.style.left = `${rect.left}px`;
-    overlay.style.width = `${rect.width}px`;
-    overlay.style.height = `${rect.height}px`;
+    overlay.style.top = `${rect.top / zoom}px`;
+    overlay.style.left = `${rect.left / zoom}px`;
+    overlay.style.width = `${rect.width / zoom}px`;
+    overlay.style.height = `${rect.height / zoom}px`;
   }
   if (tooltip) {
     tooltip.textContent = describeElement(target);
-    tooltip.style.left = `${e.clientX + 12}px`;
-    tooltip.style.top = `${e.clientY + 12}px`;
+    tooltip.style.left = `${(e.clientX + 12) / zoom}px`;
+    tooltip.style.top = `${(e.clientY + 12) / zoom}px`;
   }
 }
 
@@ -124,6 +138,45 @@ function onClick(e: MouseEvent) {
     return;
   }
 
+  selectCurrentTarget();
+}
+
+/**
+ * Disabled form elements (<button disabled>, <input disabled>, etc.) swallow
+ * click / mousedown / mouseup entirely in Chromium — even capture-phase
+ * listeners on `document` never see them.  Pointer events (pointerdown) *do*
+ * still fire, so we use this as a fallback to pick disabled elements.
+ */
+function onPointerDown(e: PointerEvent) {
+  if (!pickerActive) return;
+
+  // For non-disabled elements the regular click handler will fire right after
+  // this, so we only need to act when the target is disabled.
+  const target = e.target as HTMLElement | null;
+  if (!target) return;
+
+  const isDisabled =
+    (target as HTMLButtonElement).disabled === true ||
+    target.getAttribute('aria-disabled') === 'true' ||
+    target.closest('[disabled], [aria-disabled="true"]') !== null;
+
+  if (!isDisabled) return; // let the normal click handler deal with it
+
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+
+  // Resolve the target the same way mousemove does so the user gets the
+  // element the overlay was highlighting, not some deep child.
+  currentTarget = resolveTarget(target);
+  selectCurrentTarget();
+}
+
+function selectCurrentTarget() {
+  if (!currentTarget) {
+    deactivatePicker();
+    return;
+  }
   const anchor = extractElementInfo(currentTarget);
   const treePath = computeElementPath(currentTarget);
   chrome.runtime.sendMessage({ type: 'ELEMENT_SELECTED', anchor, treePath }, () => void chrome.runtime.lastError);
@@ -356,6 +409,7 @@ function findElementByPath(root: Element, path: string): Element | null {
 function showHighlight(el: Element) {
   removeHighlight();
   const rect = el.getBoundingClientRect();
+  const zoom = getBodyZoom();
   highlightOverlay = document.createElement('div');
   highlightOverlay.className = 'ccb-highlight-overlay';
   highlightOverlay.style.cssText = `
@@ -366,10 +420,10 @@ function showHighlight(el: Element) {
     z-index: 2147483645;
     border-radius: 2px;
     transition: all 0.05s ease-out;
-    top: ${rect.top}px;
-    left: ${rect.left}px;
-    width: ${rect.width}px;
-    height: ${rect.height}px;
+    top: ${rect.top / zoom}px;
+    left: ${rect.left / zoom}px;
+    width: ${rect.width / zoom}px;
+    height: ${rect.height / zoom}px;
   `;
   document.body.appendChild(highlightOverlay);
 }

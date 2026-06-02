@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node", "electron"],
+    "noEmit": true
+  },
+  "include": ["src/main", "src/preload/index.ts", "electron.vite.config.ts"]
+}

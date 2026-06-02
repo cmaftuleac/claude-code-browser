@@ -9,6 +9,7 @@
   "contributors": [
     "Fineguide.AI (https://fineguide.ai)"
   ],
+  "packageManager": "npm@10.9.4",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -23,10 +24,16 @@
     "build:server": "npm run build -w apps/server",
     "build:host": "npm run build -w apps/host",
     "dev:host": "npm run dev -w apps/host",
+    "dev:desktop": "npm run dev -w apps/desktop",
+    "build:desktop": "npm run build -w apps/desktop",
+    "dev:web": "npm run build -w packages/shared -w packages/agent-core && concurrently -n server,web -c blue,green \"npm run dev -w apps/server\" \"npm run dev:web -w apps/desktop\"",
+    "build:web": "npm run build -w packages/shared -w packages/agent-core && npm run build:web -w apps/desktop && npm run build -w apps/server",
+    "start:web": "npm run build:web && node apps/server/dist/index.js",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall"
   },
   "devDependencies": {
+    "concurrently": "^9.1.0",
     "turbo": "^2.1.0",
     "typescript": "^5.6.0"
   }

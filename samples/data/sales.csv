@@ -1,0 +1,192 @@
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11
+order_id,customer,product,quantity,unit_price,total,country,date
+1001,Avery Chen,Wireless Earbuds,2,79.00,158.00,US,2026-01-04
+1002,Jonas Müller,Mechanical Keyboard,1,159.99,159.99,DE,2026-01-04
+1003,Priya Shah,Standing Desk Mat,3,42.50,127.50,IN,2026-01-05
+1004,Hugo Fernández,4K Monitor,1,389.00,389.00,ES,2026-01-05
+1005,Ife Adebayo,USB-C Hub,4,29.99,119.96,NG,2026-01-06
+1006,Maya Goldberg,Ergonomic Mouse,2,49.00,98.00,IL,2026-01-06
+1007,Tomás Silva,External SSD 1TB,1,109.00,109.00,BR,2026-01-07
+1008,Aiko Tanaka,Webcam HD,2,68.50,137.00,JP,2026-01-07
+1009,Lukas Berg,Laptop Stand,1,55.00,55.00,SE,2026-01-08
+1010,Sara Khan,Noise-cancelling Headphones,1,279.00,279.00,PK,2026-01-08
+1011,Felix Dubois,Portable Charger,3,33.00,99.00,FR,2026-01-09
+1012,Olivia Carter,Bluetooth Speaker,2,89.00,178.00,UK,2026-01-09
+1013,Hassan Reza,Smart Watch,1,329.00,329.00,IR,2026-01-10
+1014,Camila Rojas,USB Microphone,1,135.00,135.00,CO,2026-01-10
+1015,Marek Nowak,Cable Organizer Box,5,18.99,94.95,PL,2026-01-11

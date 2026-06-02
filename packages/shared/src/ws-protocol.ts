@@ -17,6 +17,26 @@ export interface ElementAnchor {
   boundingRect?: { x: number; y: number; width: number; height: number };
 }
 
+// ── Visual Edit Journal ─────────────────────────────────────────────────────
+
+/** A single visual edit made in the desktop "Photoshop for HTML" editor.
+ *  The journal is serialized into a chat:send so the agent can persist the
+ *  equivalent change to source ("Save to code"). */
+export interface EditJournalEntry {
+  /** CSS selector of the edited element at edit time */
+  selector: string;
+  /** XPath of the edited element */
+  xpath?: string;
+  /** Kind of edit performed */
+  type: 'style' | 'attr' | 'text' | 'move' | 'resize' | 'reparent';
+  /** For style/attr edits: the property/attribute name (e.g. "color", "width", "href") */
+  name?: string;
+  /** Value before the edit (string for style/attr/text; serialized for move/resize/reparent) */
+  before?: string;
+  /** Value after the edit */
+  after?: string;
+}
+
 // ── Client → Server ─────────────────────────────────────────────────────────
 
 export type ClientMessage =
@@ -33,10 +53,16 @@ export type ClientMessage =
       url: string;
       projectDir?: string;
       sources?: string[];  // additional project directories
+      /** Visual edits made in the desktop editor, to be persisted to source. */
+      editJournal?: EditJournalEntry[];
     }
   | { type: 'session:list' }
   | { type: 'session:resume'; sessionId: string }
   | { type: 'agent:interrupt'; sessionId: string }
+  /** Ask the host to (un)install itself to a specific npm version and re-wire its
+   *  native-messaging manifest, then exit so Chrome respawns the fresh host. Only
+   *  sent to hosts known (by serverVersion) to support it. */
+  | { type: 'host:update'; targetVersion: string }
   | { type: 'config:set'; projectDir?: string; cdpPort?: number }
   | { type: 'sources:set'; domain: string; paths: string[] }
   | { type: 'health:check' }
@@ -94,6 +120,10 @@ export type ServerMessage =
       messages: SessionMessage[];
     }
   | { type: 'connection:ready'; serverVersion: string }
+  /** Result of a host:update request. On success the host is exiting; the extension
+   *  reconnects and re-checks the new serverVersion. On failure the host stays alive
+   *  and the extension shows manual-update instructions with `reason`. */
+  | { type: 'host:update:result'; success: boolean; reason?: string; installedVersion?: string }
   | {
       type: 'health';
       nodeVersion: string;

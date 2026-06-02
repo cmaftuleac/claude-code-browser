@@ -3,6 +3,33 @@ import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import { useConnectionStore } from '../stores/connection-store';
 import { useChatStore, bumpStat, type ChatMessage } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
+import { MIN_HOST_VERSION, SELF_UPDATE_MIN_VERSION } from '../config';
+import { cmpSemver } from '../semver';
+
+// Watchdog for an in-flight silent host:update. Module-level so it survives the
+// hook re-running on reconnect. If neither host:update:result nor a fresh
+// connection:ready resolves the update within this window (host hung / never
+// respawned), fall back to the manual-update screen.
+const UPDATE_WATCHDOG_MS = 4 * 60 * 1000;
+let updateWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+function clearUpdateWatchdog() {
+  if (updateWatchdog) {
+    clearTimeout(updateWatchdog);
+    updateWatchdog = null;
+  }
+}
+
+function armUpdateWatchdog() {
+  clearUpdateWatchdog();
+  updateWatchdog = setTimeout(() => {
+    updateWatchdog = null;
+    const cs = useConnectionStore.getState();
+    if (!cs.hostUpdating) return; // already resolved
+    cs.setNeedsManualUpdate({ target: MIN_HOST_VERSION, current: null, reason: 'Automatic update timed out.' });
+    cs.setStatus('disconnected');
+  }, UPDATE_WATCHDOG_MS);
+}
 
 /** Get target tab URL and domain from the pinned tab */
 function getTargetTabInfo(callback: (url: string, domain: string) => void) {
@@ -80,8 +107,48 @@ export function useNativePort() {
 
       switch (msg.type) {
         case 'connection:ready': {
-          setStatus('connected');
-          send({ type: 'session:list' });
+          const v = msg.serverVersion;
+          const cs = useConnectionStore.getState();
+
+          // Compatible: host is equal-or-newer than our floor. Upgrade-only — a
+          // newer host is left untouched.
+          if (cmpSemver(v, MIN_HOST_VERSION) >= 0) {
+            clearUpdateWatchdog();
+            cs.resetUpdateAttempt();
+            setStatus('connected');
+            send({ type: 'session:list' });
+            break;
+          }
+
+          // Host is too old. Either it can't self-update, or we already tried once
+          // this session and it still mismatches → stop and ask for a manual update.
+          if (cmpSemver(v, SELF_UPDATE_MIN_VERSION) < 0 || cs.updateAttempted) {
+            clearUpdateWatchdog();
+            cs.setNeedsManualUpdate({ target: MIN_HOST_VERSION, current: v });
+            setStatus('disconnected');
+            break;
+          }
+
+          // Capable of self-update and not yet attempted → fire one silent update.
+          // The host installs the target, re-wires its manifest, and exits; the
+          // native-disconnect → respawn → fresh connection:ready path re-runs this.
+          cs.markUpdateAttempted();
+          setStatus('connecting');
+          send({ type: 'host:update', targetVersion: MIN_HOST_VERSION });
+          armUpdateWatchdog();
+          break;
+        }
+
+        case 'host:update:result': {
+          const cs = useConnectionStore.getState();
+          if (!msg.success) {
+            clearUpdateWatchdog();
+            cs.setNeedsManualUpdate({ target: MIN_HOST_VERSION, current: null, reason: msg.reason });
+            setStatus('disconnected');
+          }
+          // On success the host is exiting; do nothing here — the respawn path
+          // drives reconnection and re-checks the version. Watchdog stays armed
+          // until that fresh connection:ready (or it times out).
           break;
         }
 
