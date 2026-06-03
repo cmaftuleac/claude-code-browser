@@ -346,6 +346,24 @@ export const selectActiveIsRunning = (s: ChatState): boolean => {
 export const selectActiveSessionId = (s: ChatState): string | null =>
   s.activeView.kind === 'session' ? s.activeView.sessionId : null;
 
+/** Title for the currently-active view, for the header above the messages. Works
+ *  for any view: host title → local first message → id fallback (session), first
+ *  message → "New chat" (pending), '' (empty). */
+export const selectActiveTitle = (s: ChatState): string => {
+  if (s.activeView.kind === 'session') {
+    const id = s.activeView.sessionId;
+    const host = s.sessions.find((x) => x.id === id);
+    if (host?.title) return host.title;
+    const local = s.sessionStates[id];
+    return (local && firstUserText(local)) || `Session ${id.slice(0, 8)}`;
+  }
+  if (s.activeView.kind === 'pending') {
+    const st = s.pendingNewChats[s.activeView.clientRequestId];
+    return (st && firstUserText(st)) || 'New chat';
+  }
+  return '';
+};
+
 // ── Session list (unified, immediate) ──────────────────────────────────────
 
 /** A row in the session list. `pending` rows are in-progress new chats whose
@@ -365,6 +383,14 @@ function firstUserText(st: SessionState): string {
 function lastTs(st: SessionState): number {
   return st.messages.length ? st.messages[st.messages.length - 1].timestamp : 0;
 }
+/** Timestamp of the most recent USER message — the recency key the list sorts by,
+ *  so a session jumps to the top the instant the user sends a message in it. */
+function lastUserTs(st: SessionState): number {
+  for (let i = st.messages.length - 1; i >= 0; i--) {
+    if (st.messages[i].role === 'user') return st.messages[i].timestamp;
+  }
+  return 0;
+}
 
 /** Build the session list from LOCAL state first so a new chat shows the instant
  *  the user sends — independent of the host's disk-backed listSessions (which lags
@@ -380,18 +406,25 @@ export function buildSessionEntries(
   // Pending chats with at least a user message.
   for (const [cid, st] of Object.entries(pendingNewChats)) {
     if (st.messages.length === 0) continue;
-    entries.push({ kind: 'pending', id: cid, title: firstUserText(st) || 'New chat', lastModified: lastTs(st), isRunning: st.isRunning });
+    entries.push({ kind: 'pending', id: cid, title: firstUserText(st) || 'New chat', lastModified: lastUserTs(st) || lastTs(st), isRunning: st.isRunning });
   }
-  // Host (disk) sessions.
+  // Host (disk) sessions. Sort key is the most recent of the host's lastModified and
+  // the local last-user-message time, so sending a message bumps the session to the
+  // top immediately — before the host's disk list refreshes.
   const hostIds = new Set<string>();
   for (const s of sessions) {
     hostIds.add(s.id);
-    entries.push({ kind: 'session', id: s.id, title: s.title, lastModified: s.lastModified, isRunning: sessionStates[s.id]?.isRunning ?? false });
+    const local = sessionStates[s.id];
+    entries.push({
+      kind: 'session', id: s.id, title: s.title,
+      lastModified: Math.max(s.lastModified, local ? lastUserTs(local) : 0),
+      isRunning: local?.isRunning ?? false,
+    });
   }
   // Locally-known sessions the host hasn't listed yet (just created/migrated; disk lag).
   for (const [sid, st] of Object.entries(sessionStates)) {
     if (hostIds.has(sid) || st.messages.length === 0) continue;
-    entries.push({ kind: 'session', id: sid, title: firstUserText(st) || `Session ${sid.slice(0, 8)}`, lastModified: lastTs(st), isRunning: st.isRunning });
+    entries.push({ kind: 'session', id: sid, title: firstUserText(st) || `Session ${sid.slice(0, 8)}`, lastModified: lastUserTs(st) || lastTs(st), isRunning: st.isRunning });
   }
   return entries.sort((a, b) => b.lastModified - a.lastModified);
 }

@@ -161,9 +161,23 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
     if (res.ok) {
       setCreating(null);
       void refreshDir(entry.path);
+      if (creating === 'file' && res.path) void openFile(res.path);
     }
     return res;
   };
+
+  // Drive the inline create row from an external request (File → New File menu
+  // targeting this folder). ContextPanel handles the project root.
+  const pendingCreate = useWorkspaceStore((s) => s.pendingCreate);
+  useEffect(() => {
+    if (entry.isDir && pendingCreate && pendingCreate.dir === entry.path) {
+      useWorkspaceStore.getState().clearPendingCreate();
+      void beginCreate(pendingCreate.kind);
+    }
+    // beginCreate is stable enough for this transient signal; intentionally
+    // keyed only on the pending request + this node's identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCreate, entry.isDir, entry.path]);
 
   const copyPath = (relative: boolean): void => {
     const p = relative && root

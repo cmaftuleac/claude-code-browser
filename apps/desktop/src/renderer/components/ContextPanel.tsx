@@ -4,6 +4,7 @@ import { useWorkspaceStore, type DirEntry } from '../stores/workspace-store';
 // Workspace-level open files (project-wide). Files used to be per-task; now
 // they live in workspace-store so they persist across conversation switches.
 import { FileTreeNode } from './FileTreeNode';
+import { FileTreeCreateRow } from './FileTreeCreateRow';
 
 const EMPTY: DirEntry[] = [];
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
@@ -14,6 +15,20 @@ export function ContextPanel() {
   const rootChildren = useWorkspaceStore((s) => (s.root ? s.children[s.root] ?? EMPTY : EMPTY));
   const openFolder = useWorkspaceStore((s) => s.openFolder);
   const workingFiles = useWorkspaceStore((s) => s.workingFiles);
+  // Inline create row for the project root (File → New File targets the root).
+  const rootCreating = useWorkspaceStore((s) => (root && s.pendingCreate?.dir === root ? s.pendingCreate.kind : null));
+
+  const submitRootCreate = async (createName: string): Promise<{ ok: boolean; error?: string }> => {
+    if (!root) return { ok: false, error: 'No project open.' };
+    const fn = rootCreating === 'folder' ? window.ccb.fs.createFolder : window.ccb.fs.createFile;
+    const res = await fn(root, createName);
+    if (res.ok) {
+      useWorkspaceStore.getState().clearPendingCreate();
+      void useWorkspaceStore.getState().refreshDir(root);
+      if (rootCreating === 'file' && res.path) void useWorkspaceStore.getState().openFile(res.path);
+    }
+    return res;
+  };
 
   return (
     <div>
@@ -45,6 +60,25 @@ export function ContextPanel() {
                 {name}
               </button>
               <div className="tree">
+                <AnimatePresence initial={false}>
+                  {rootCreating && (
+                    <motion.div
+                      key="root-create"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={ANIM}
+                      style={{ overflow: 'hidden' }}
+                    >
+                      <FileTreeCreateRow
+                        kind={rootCreating}
+                        depth={0}
+                        onSubmit={submitRootCreate}
+                        onCancel={() => useWorkspaceStore.getState().clearPendingCreate()}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 {rootChildren.map((child) => (
                   <FileTreeNode key={child.path} entry={child} depth={0} />
                 ))}

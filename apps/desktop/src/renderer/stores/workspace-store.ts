@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useUiStore } from './ui-store';
 import { useRecentsStore } from './recents-store';
-import { useTasksStore, type FileBuffer } from './tasks-store';
+import { useTasksStore } from './tasks-store';
 import { useNavStore } from './nav-store';
 
 export interface DirEntry {
@@ -9,6 +9,12 @@ export interface DirEntry {
   path: string;
   isDir: boolean;
 }
+
+/** An open file's buffer state. Text files carry their content; binary files
+ *  just track size — HexView / DataGridView fetch chunks on demand. */
+export type FileBuffer =
+  | { kind: 'text'; content: string; saved: string; conflict?: boolean; size: number }
+  | { kind: 'binary'; size: number };
 
 interface WorkspaceState {
   root: string | null;
@@ -18,6 +24,10 @@ interface WorkspaceState {
   expanded: Record<string, boolean>;
   /** Transient banner — last error from openFolder, cleared on next navigation. */
   openError: string | null;
+  /** Transient request to start an inline "new file/folder" row under `dir`.
+   *  Consumed by the matching tree node (or ContextPanel for the project root).
+   *  Lets the File → New File menu drive the tree's existing create flow. */
+  pendingCreate: { dir: string; kind: 'file' | 'folder' } | null;
 
   // ── Project-wide open files (used to live per-task, now shared across
   //    all conversation tabs in the project so opening a file doesn't depend
@@ -34,6 +44,9 @@ interface WorkspaceState {
   toggleDir(path: string): Promise<void>;
   refreshDir(path: string): Promise<void>;
   clearOpenError(): void;
+  /** Ask the tree to open an inline create row under `dir`. */
+  requestCreate(dir: string, kind: 'file' | 'folder'): void;
+  clearPendingCreate(): void;
 
   // ── File-tab operations (project-wide).
   /** Open a file and make it the active file tab. Idempotent — re-opens the
@@ -56,6 +69,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   children: {},
   expanded: {},
   openError: null,
+  pendingCreate: null,
   workingFiles: [],
   fileBuffers: {},
   activeFile: null,
@@ -76,6 +90,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       children: {},
       expanded: { [result.root]: true },
       openError: null,
+      pendingCreate: null,
       workingFiles: [],
       fileBuffers: {},
       activeFile: null,
@@ -99,6 +114,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       name: null,
       children: {},
       expanded: {},
+      pendingCreate: null,
       workingFiles: [],
       fileBuffers: {},
       activeFile: null,
@@ -128,6 +144,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   clearOpenError: () => set({ openError: null }),
+
+  requestCreate: (dir, kind) => set({ pendingCreate: { dir, kind } }),
+  clearPendingCreate: () => set({ pendingCreate: null }),
 
   // ── File operations ────────────────────────────────────────────────
 

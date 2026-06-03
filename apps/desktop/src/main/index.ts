@@ -76,13 +76,17 @@ async function dispatch(msg: ClientMessage): Promise<void> {
       break;
     }
     case 'session:list': {
-      const b = await getBackend();
-      send({ type: 'session:list', sessions: await b.listSessions().catch(() => []) });
+      // Always reply — even if backend init rejects — so the renderer's
+      // Resume disclosure never hangs on a perpetual "Loading…".
+      let sessions: Awaited<ReturnType<AgentBackend['listSessions']>> = [];
+      try { sessions = await (await getBackend()).listSessions(); } catch { /* empty list */ }
+      send({ type: 'session:list', sessions });
       break;
     }
     case 'session:resume': {
-      const b = await getBackend();
-      send({ type: 'session:messages', sessionId: msg.sessionId, messages: await b.getMessages(msg.sessionId).catch(() => []) });
+      let messages: Awaited<ReturnType<AgentBackend['getMessages']>> = [];
+      try { messages = await (await getBackend()).getMessages(msg.sessionId); } catch { /* empty history */ }
+      send({ type: 'session:messages', sessionId: msg.sessionId, messages });
       break;
     }
     case 'agent:interrupt': {

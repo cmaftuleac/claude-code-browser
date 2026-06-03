@@ -3,6 +3,7 @@ import type { ServerMessage } from '@claude-code-browser/shared';
 import { useTasksStore } from '../stores/tasks-store';
 import { useConnectionStore } from '../stores/connection-store';
 import { useRecentsStore } from '../stores/recents-store';
+import { useSessionsStore } from '../stores/sessions-store';
 
 /**
  * Subscribes to ServerMessage events over the Electron IPC bridge and routes
@@ -29,6 +30,9 @@ export function useAgentIpc(): void {
           break;
         case 'commands:list':
           conn.setCommands(msg.commands);
+          break;
+        case 'session:list':
+          useSessionsStore.getState().setSessions(msg.sessions);
           break;
         default:
           handleServer(msg);
