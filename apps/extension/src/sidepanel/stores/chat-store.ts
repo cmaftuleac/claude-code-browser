@@ -67,6 +67,11 @@ interface ChatState {
    *  Returns true when the caller should fire session:resume (bucket was new/empty). */
   selectSession: (id: string) => boolean;
 
+  /** Switch the view to an in-progress pending chat (session_id not yet resolved).
+   *  Lets the user navigate back to a new chat they started before its answer/
+   *  session:created arrived — purely local, no resume needed. */
+  selectPending: (clientRequestId: string) => void;
+
   /** Move a pending bucket onto its real sessionId, updating the active view if
    *  it was pointing at this pending. Called when session:created arrives. */
   migratePendingToSession: (clientRequestId: string, sessionId: string) => void;
@@ -160,6 +165,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
     return needsResume;
   },
+
+  selectPending: (clientRequestId) =>
+    set((state) =>
+      state.pendingNewChats[clientRequestId]
+        ? { activeView: { kind: 'pending', clientRequestId }, pendingAnchors: [] }
+        : state),
 
   migratePendingToSession: (clientRequestId, sessionId) =>
     set((state) => {
@@ -334,3 +345,53 @@ export const selectActiveIsRunning = (s: ChatState): boolean => {
 /** The session id that owns the current view, or null for empty/pending. */
 export const selectActiveSessionId = (s: ChatState): string | null =>
   s.activeView.kind === 'session' ? s.activeView.sessionId : null;
+
+// ── Session list (unified, immediate) ──────────────────────────────────────
+
+/** A row in the session list. `pending` rows are in-progress new chats whose
+ *  Claude Code session_id hasn't resolved yet (id = clientRequestId); `session`
+ *  rows are real sessions (id = sessionId). */
+export interface SessionListEntry {
+  kind: 'pending' | 'session';
+  id: string;
+  title: string;
+  lastModified: number;
+  isRunning: boolean;
+}
+
+function firstUserText(st: SessionState): string {
+  return (st.messages.find((m) => m.role === 'user')?.content ?? '').trim();
+}
+function lastTs(st: SessionState): number {
+  return st.messages.length ? st.messages[st.messages.length - 1].timestamp : 0;
+}
+
+/** Build the session list from LOCAL state first so a new chat shows the instant
+ *  the user sends — independent of the host's disk-backed listSessions (which lags
+ *  until the agent has written the session). Merges: in-progress pending chats +
+ *  the host's sessions + any locally-known sessions not yet in the host list
+ *  (freshly created/migrated). Deduped by id, newest first. */
+export function buildSessionEntries(
+  sessions: SessionInfo[],
+  pendingNewChats: Record<string, SessionState>,
+  sessionStates: Record<string, SessionState>,
+): SessionListEntry[] {
+  const entries: SessionListEntry[] = [];
+  // Pending chats with at least a user message.
+  for (const [cid, st] of Object.entries(pendingNewChats)) {
+    if (st.messages.length === 0) continue;
+    entries.push({ kind: 'pending', id: cid, title: firstUserText(st) || 'New chat', lastModified: lastTs(st), isRunning: st.isRunning });
+  }
+  // Host (disk) sessions.
+  const hostIds = new Set<string>();
+  for (const s of sessions) {
+    hostIds.add(s.id);
+    entries.push({ kind: 'session', id: s.id, title: s.title, lastModified: s.lastModified, isRunning: sessionStates[s.id]?.isRunning ?? false });
+  }
+  // Locally-known sessions the host hasn't listed yet (just created/migrated; disk lag).
+  for (const [sid, st] of Object.entries(sessionStates)) {
+    if (hostIds.has(sid) || st.messages.length === 0) continue;
+    entries.push({ kind: 'session', id: sid, title: firstUserText(st) || `Session ${sid.slice(0, 8)}`, lastModified: lastTs(st), isRunning: st.isRunning });
+  }
+  return entries.sort((a, b) => b.lastModified - a.lastModified);
+}

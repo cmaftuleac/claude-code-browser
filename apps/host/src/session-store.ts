@@ -14,13 +14,18 @@ export class SessionStore {
     try {
       const sessions = await listSessions(dir ? { dir: normalizeDir(dir) } : {});
       return sessions.map((s) => {
-        // Prefer firstPrompt (literal first user message, multi-line preserved) over
-        // summary (often newline-collapsed, which defeats line-based metadata stripping).
-        // Order: user-set title → first prompt → summary → id fallback.
-        const fromFirst = stripPromptPrefix(s.firstPrompt ?? '').slice(0, 80);
+        // s.summary is Claude Code's display title: customTitle → auto-generated
+        // (Haiku) summary → firstPrompt. When a generated title or custom title
+        // exists it differs from the raw firstPrompt and is already clean, so use
+        // it — this surfaces Claude's nice title. Otherwise summary == firstPrompt
+        // (possibly newline-collapsed, which defeats line-based metadata stripping),
+        // so fall back to the multi-line firstPrompt where the buildPrompt() prefix
+        // (URL / selected elements) strips correctly.
         const fromSummary = stripPromptPrefix(s.summary ?? '').slice(0, 80);
+        const fromFirst = stripPromptPrefix(s.firstPrompt ?? '').slice(0, 80);
+        const hasGeneratedTitle = !!s.summary && s.summary !== s.firstPrompt;
         const title =
-          s.customTitle ||
+          (hasGeneratedTitle ? fromSummary : '') ||
           fromFirst ||
           fromSummary ||
           `Session ${s.sessionId.slice(0, 8)}`;
