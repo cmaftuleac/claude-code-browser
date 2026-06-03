@@ -4,7 +4,7 @@
  * messages be injected mid-turn without interrupting the agent.
  */
 
-import { query, renameSession } from '@anthropic-ai/claude-agent-sdk';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { ElementAnchor, ServerMessage } from '@claude-code-browser/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
@@ -158,8 +158,6 @@ interface LiveSession {
    *  in response to interrupt(), so we use this flag to distinguish a deliberate
    *  stop from a real error. Reset when the resulting message is consumed. */
   interrupted: boolean;
-  /** Set once for brand-new sessions so we can renameSession after init */
-  pendingTitle: string;
 }
 
 function sourcesEqual(a: string[], b: string[]): boolean {
@@ -332,8 +330,6 @@ CRITICAL RULES:
     try { mkdirSync(cwd, { recursive: true }); } catch { /* best-effort */ }
     const abortController = new AbortController();
     const pump = new AsyncMessagePump<SDKUserMessage>();
-    const isNewSession = !params.sessionId;
-    const pendingTitle = isNewSession ? params.message.trim().slice(0, 80) : '';
 
     const q = query({
       prompt: pump,
@@ -374,7 +370,6 @@ CRITICAL RULES:
       cwd,
       sources: params.sources ?? [],
       interrupted: false,
-      pendingTitle,
     };
 
     if (params.sessionId) this.liveSessions.set(params.sessionId, live);
@@ -412,13 +407,11 @@ CRITICAL RULES:
           // session:created must include clientRequestId so the extension migrates
           // its pending bucket to the real sessionId.
           this.send({ type: 'session:created', sessionId: sid, clientRequestId: live.clientRequestId });
-          if (live.pendingTitle) {
-            const title = live.pendingTitle;
-            live.pendingTitle = '';
-            renameSession(sid, title).catch((err) => {
-              log('renameSession failed:', err instanceof Error ? err.message : String(err));
-            });
-          }
+          // Deliberately do NOT renameSession() with the first message: that sets
+          // customTitle, which permanently masks Claude Code's auto-generated
+          // summary. Leaving customTitle unset lets listSessions().summary surface
+          // the generated Haiku title (falling back to the first prompt until it's
+          // generated). See session-store.getSessions.
         }
 
         const sid = live.sessionId;
