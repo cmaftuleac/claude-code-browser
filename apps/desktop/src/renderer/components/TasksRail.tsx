@@ -1,11 +1,85 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Info, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Info, Pencil, Trash2, ChevronRight, History } from 'lucide-react';
 import { useTasksStore } from '../stores/tasks-store';
+import { useSessionsStore } from '../stores/sessions-store';
+import { useWorkspaceStore } from '../stores/workspace-store';
+import { useUiStore } from '../stores/ui-store';
 import { ContextMenu, type CtxItem } from './ContextMenu';
 import { ConfirmCard } from './ConfirmCard';
 
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
+
+/** Collapsible list of prior on-disk sessions for this project, resumable
+ *  into a fresh task. Fetches the list lazily the first time it's opened. */
+function ResumeSection() {
+  const [open, setOpen] = useState(false);
+  const sessions = useSessionsStore((s) => s.sessions);
+  const loaded = useSessionsStore((s) => s.loaded);
+  const loading = useSessionsStore((s) => s.loading);
+  const root = useWorkspaceStore((s) => s.root);
+  const resumeSession = useTasksStore((s) => s.resumeSession);
+
+  const toggle = (): void => {
+    const next = !open;
+    setOpen(next);
+    // Refetch every time it's opened so newly-created sessions show up; the
+    // previously-loaded list stays visible until the fresh reply replaces it.
+    if (next) useSessionsStore.getState().requestList();
+  };
+
+  // Scope to the current project (sessions carry their cwd). Normalize a
+  // trailing slash, and keep sessions with no recorded cwd rather than hiding
+  // potentially-resumable history.
+  const norm = (p: string): string => p.replace(/\/+$/, '');
+  const projectSessions = root
+    ? sessions.filter((s) => !s.cwd || norm(s.cwd) === norm(root))
+    : sessions;
+
+  const onPick = (id: string, title: string): void => {
+    const taskId = resumeSession({ id, title });
+    useUiStore.getState().setActiveTab({ kind: 'conv', taskId });
+  };
+
+  return (
+    <div className="tasks-rail__section">
+      <button className="tasks-rail__disclosure" onClick={toggle} aria-expanded={open}>
+        <motion.span animate={{ rotate: open ? 90 : 0 }} transition={ANIM} style={{ display: 'flex' }}>
+          <ChevronRight size={12} strokeWidth={2} />
+        </motion.span>
+        <History size={12} strokeWidth={1.75} />
+        Resume session
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={ANIM}
+            style={{ overflow: 'hidden' }}
+          >
+            {loading && !loaded && <div className="tasks-rail__hint">Loading…</div>}
+            {loaded && projectSessions.length === 0 && (
+              <div className="tasks-rail__hint">No past sessions for this project.</div>
+            )}
+            {projectSessions.map((s) => (
+              <button
+                key={s.id}
+                className="session-row"
+                onClick={() => onPick(s.id, s.title)}
+                title={s.title}
+              >
+                <span className="session-row__title">{s.title || 'Untitled session'}</span>
+                <span className="session-row__time">{new Date(s.lastModified).toLocaleDateString()}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 interface TaskRowProps {
   id: string;
@@ -142,6 +216,8 @@ export function TasksRail() {
           ))}
         </AnimatePresence>
       </div>
+
+      <ResumeSection />
 
       <div className="tasks-rail__caption">
         <Info size={11} strokeWidth={1.75} />

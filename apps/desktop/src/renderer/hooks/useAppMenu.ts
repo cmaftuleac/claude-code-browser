@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { useTasksStore, selectActiveTask } from '../stores/tasks-store';
+import { useTasksStore } from '../stores/tasks-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
-import { useUiStore } from '../stores/ui-store';
+import { useUiStore, closeActiveTab } from '../stores/ui-store';
 import { useNavStore } from '../stores/nav-store';
 import { useRecentsStore } from '../stores/recents-store';
 
@@ -21,10 +21,16 @@ export function useAppMenu(): void {
     sub('newTask', () => { useTasksStore.getState().newConversation(); });
 
     sub('newFile', () => {
-      // The tree owns inline-create. No global "scratch buffer" yet, so
-      // route this to a no-op for now — the user can still click a folder's
-      // ⋯ menu's "New File" or hit the tree's keyboard path.
-      // (Defer: open an in-memory untitled tab.)
+      // Drive the tree's existing inline-create flow at the project root. The
+      // root ContextPanel picks up the pendingCreate signal, opens an inline
+      // name input, and creates + opens the file on submit. Ensure the State
+      // Rail (which hosts the file tree) is open first, or the row — and the
+      // menu action — would have nowhere to render.
+      const ws = useWorkspaceStore.getState();
+      if (!ws.root) return;
+      const ui = useUiStore.getState();
+      if (!ui.stateRailOpen) ui.toggleStateRail();
+      ws.requestCreate(ws.root, 'file');
     });
 
     sub('openFolder', () => { void useWorkspaceStore.getState().openFolder(); });
@@ -40,28 +46,17 @@ export function useAppMenu(): void {
     });
 
     sub('save', () => {
-      const t = selectActiveTask(useTasksStore.getState());
-      if (t?.activeFile) void useTasksStore.getState().saveFile(t.id, t.activeFile);
+      const ws = useWorkspaceStore.getState();
+      if (ws.activeFile) void ws.saveFile(ws.activeFile);
     });
 
     sub('saveAll', () => {
-      const t = selectActiveTask(useTasksStore.getState());
-      if (t) void useTasksStore.getState().saveAll(t.id);
+      void useWorkspaceStore.getState().saveAll();
     });
 
-    sub('closeTab', () => {
-      // Same path as the Cmd+W intercept and the tab X buttons: close the
-      // currently-visible tab; cascade in tasks-store handles task/project.
-      const tasks = useTasksStore.getState();
-      const ws = useWorkspaceStore.getState();
-      if (tasks.activeId) {
-        tasks.closeActiveTab(tasks.activeId);
-      } else if (ws.root) {
-        ws.closeProject();
-      } else {
-        void window.ccb.app.quit();
-      }
-    });
+    // Same shared ladder as the Cmd+W intercept: close the active tab, else
+    // close the project, else quit.
+    sub('closeTab', () => { closeActiveTab(); });
 
     sub('closeProject', () => {
       const ws = useWorkspaceStore.getState();
@@ -77,9 +72,7 @@ export function useAppMenu(): void {
     sub('navForward', () => { useNavStore.getState().forward(); });
 
     // ── Help ────────────────────────────────────────────────
-    sub('about', () => {
-      // No about dialog yet — defer; for now, open the README on GitHub.
-    });
+    sub('about', () => { useUiStore.getState().openAbout(); });
 
     // ── App ─────────────────────────────────────────────────
     sub('quit', () => { void window.ccb.app.quit(); });

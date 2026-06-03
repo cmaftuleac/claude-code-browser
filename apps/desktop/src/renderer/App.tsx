@@ -10,12 +10,13 @@ import { TasksRail } from './components/TasksRail';
 import { TaskWorkspace } from './components/TaskWorkspace';
 import { StateRail } from './components/StateRail';
 import { HomeScreen } from './components/HomeScreen';
-import { useTasksStore, selectActiveTask } from './stores/tasks-store';
+import { AboutDialog } from './components/AboutDialog';
+import { useTasksStore } from './stores/tasks-store';
 import { useWorkspaceStore } from './stores/workspace-store';
 import { useFileClipboardStore } from './stores/file-clipboard-store';
 import { useRecentsStore } from './stores/recents-store';
 import { useConnectionStore } from './stores/connection-store';
-import { useUiStore } from './stores/ui-store';
+import { useUiStore, closeActiveTab } from './stores/ui-store';
 
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -37,6 +38,8 @@ export function App() {
   const tasksRailOpen = useUiStore((s) => s.tasksRailOpen);
   const stateRailOpen = useUiStore((s) => s.stateRailOpen);
   const view = useUiStore((s) => s.view);
+  const aboutOpen = useUiStore((s) => s.aboutOpen);
+  const closeAbout = useUiStore((s) => s.closeAbout);
 
   // ── Global shortcuts: Cmd+W (tiered close) and Cmd+Q (hold to quit). ──
   const [holdActive, setHoldActive] = useState(false);
@@ -54,33 +57,9 @@ export function App() {
     // chrome/browser/ui/views/confirm_quit_bubble_controller.cc).
     const HOLD_MS = 1500;
 
-    const offW = window.ccb.app.onCmdW(() => {
-      // Cmd+W ladder:
-      //   1. Close the currently-active tab (conv / file / browser).
-      //   2. No active tab but project loaded? Close project (Home view).
-      //   3. No project? Quit.
-      const ui = useUiStore.getState();
-      const ws = useWorkspaceStore.getState();
-      const tasks = useTasksStore.getState();
-      const tab = ui.activeTab;
-      // Validate the activeTab against current state — it can briefly point
-      // to a just-deleted target before our reconcile-effect catches up.
-      const tabIsLive = tab
-        ? tab.kind === 'conv' ? tasks.tasks.some((t) => t.id === tab.taskId)
-        : tab.kind === 'file' ? ws.workingFiles.includes(tab.path)
-        : tab.kind === 'browser' ? tasks.tasks.some((t) => t.id === tab.taskId && t.surfaces.browser)
-        : false
-        : false;
-      if (tab && tabIsLive) {
-        if (tab.kind === 'conv') tasks.deleteTask(tab.taskId);
-        else if (tab.kind === 'file') ws.closeFile(tab.path);
-        else if (tab.kind === 'browser') tasks.closeBrowserSurface(tab.taskId);
-        return;
-      }
-      // No live tab: fall through to project close / app quit.
-      if (ws.root) ws.closeProject();
-      else void window.ccb.app.quit();
-    });
+    // Cmd+W ladder lives in ui-store.closeActiveTab (shared with File → Close
+    // Tab): close the active tab, else close the project, else quit.
+    const offW = window.ccb.app.onCmdW(() => closeActiveTab());
 
     const offQDown = window.ccb.app.onCmdQDown(() => {
       const hasProject = useWorkspaceStore.getState().root != null;
@@ -135,9 +114,7 @@ export function App() {
       const isMac = navigator.platform.toLowerCase().includes('mac');
       const primary = isMac ? e.metaKey : e.ctrlKey;
       if (e.shiftKey || e.altKey) return;
-      const tasks = useTasksStore.getState();
-      const active = selectActiveTask(tasks);
-      const target = active?.activeFile;
+      const target = useWorkspaceStore.getState().activeFile;
       if (!target) return;
 
       // Delete branch fires WITHOUT requiring the primary modifier so that
@@ -145,9 +122,7 @@ export function App() {
       // matches Finder + VS Code behavior. Cmd/Ctrl+Backspace still works.
       if (e.key === 'Delete' || (primary && e.key === 'Backspace')) {
         e.preventDefault();
-        for (const t of useTasksStore.getState().tasks) {
-          if (t.fileBuffers[target]) useTasksStore.getState().closeFile(t.id, target);
-        }
+        useWorkspaceStore.getState().closeFile(target);
         void window.ccb.fs.deletePath(target);
         const p = target.slice(0, target.lastIndexOf('/'));
         if (p) void useWorkspaceStore.getState().refreshDir(p);
@@ -172,9 +147,7 @@ export function App() {
             await window.ccb.fs.copyPaths(cb.paths, destDir);
           } else {
             for (const src of cb.paths) {
-              for (const t of useTasksStore.getState().tasks) {
-                if (t.fileBuffers[src]) useTasksStore.getState().closeFile(t.id, src);
-              }
+              useWorkspaceStore.getState().closeFile(src);
             }
             await window.ccb.fs.movePaths(cb.paths, destDir);
             cb.clear();
@@ -195,21 +168,18 @@ export function App() {
   // submenu have data without waiting for a project open.
   useEffect(() => { void useRecentsStore.getState().load(); }, []);
 
-  // Live-reflect on-disk changes: route into the active task's open file buffers.
+  // Live-reflect on-disk changes into the (project-wide) open file buffers.
   useEffect(() => {
     return window.ccb.fs.onFsChange((paths) => {
       const ws = useWorkspaceStore.getState();
-      const tasksState = useTasksStore.getState();
       const dirs = new Set<string>();
       for (const p of paths) {
         const slash = p.lastIndexOf('/');
         if (slash > 0) dirs.add(p.slice(0, slash));
-        for (const t of tasksState.tasks) {
-          if (t.fileBuffers[p]) {
-            void window.ccb.fs.readFile(p).then((res) => {
-              if (res.content != null) useTasksStore.getState().applyDiskChange(t.id, p, res.content);
-            });
-          }
+        if (ws.fileBuffers[p]) {
+          void window.ccb.fs.readFile(p).then((res) => {
+            if (res.content != null) useWorkspaceStore.getState().applyDiskChange(p, res.content);
+          });
         }
       }
       for (const d of dirs) void ws.refreshDir(d);
@@ -268,6 +238,9 @@ export function App() {
             </motion.div>
           </motion.div>
         )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {aboutOpen && <AboutDialog key="about" onClose={closeAbout} />}
       </AnimatePresence>
       <div className="ide__footer">
         <span className={`ide__footer-item ide__footer-conn--${status}`}>
