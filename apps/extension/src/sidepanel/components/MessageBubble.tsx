@@ -1,28 +1,11 @@
 import React, { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { Markdown } from '../lib/markdown';
 import type { ChatMessage } from '../stores/chat-store';
 import type { ElementAnchor } from '@claude-code-browser/shared';
 
 interface Props {
   message: ChatMessage;
 }
-
-const markdownComponents = {
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={(e) => {
-        e.preventDefault();
-        if (href) chrome.tabs.create({ url: href });
-      }}
-    >
-      {children}
-    </a>
-  ),
-};
 
 /** Render content with inline element chips for user messages */
 function renderUserContent(content: string, anchors?: ElementAnchor[]) {
@@ -83,7 +66,7 @@ function ToolUseBubble({ message }: Props) {
     <div className="message-bubble message-bubble--tool-use">
       <span className="message-bubble__tool-icon">{'\u2692'}</span>
       <div className="message-bubble__tool-detail">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+        <Markdown>{message.content}</Markdown>
       </div>
     </div>
   );
@@ -121,9 +104,7 @@ export function MessageBubble({ message }: Props) {
         {isUser ? (
           renderUserContent(message.content, message.anchors)
         ) : (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {message.content}
-          </ReactMarkdown>
+          <Markdown>{message.content}</Markdown>
         )}
       </div>
     </div>
