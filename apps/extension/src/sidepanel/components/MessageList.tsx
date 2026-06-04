@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useChatStore, selectActiveMessages } from '../stores/chat-store';
 import { MessageBubble } from './MessageBubble';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const STICK_THRESHOLD_PX = 40;
 
@@ -31,7 +32,21 @@ export function MessageList() {
         </div>
       )}
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+        // One boundary per message: a single un-renderable message (e.g. bad
+        // markdown/KaTeX) degrades to an inline notice instead of blanking the
+        // whole chat. resetKeys re-tries as the content streams in.
+        <ErrorBoundary
+          key={msg.id}
+          label="Message"
+          resetKeys={[msg.content, msg.isStreaming]}
+          fallback={
+            <div className="message-bubble message-bubble--system">
+              ⚠ This message could not be displayed.
+            </div>
+          }
+        >
+          <MessageBubble message={msg} />
+        </ErrorBoundary>
       ))}
       <div ref={bottomRef} />
     </div>

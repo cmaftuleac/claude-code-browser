@@ -1493,3 +1493,29 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #4a4a6a;
 }
+
+/* ── Markdown extras: math (KaTeX), syntax highlighting, diagrams, media ── */
+.message-bubble__content pre code.hljs,
+.message-bubble__tool-detail pre code.hljs { background: transparent; padding: 0; }
+.message-bubble__content .katex-display,
+.message-bubble__tool-detail .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+/* Mermaid: fade in once the SVG lands (no framer-motion in the extension). */
+.message-bubble__content .md-mermaid,
+.message-bubble__tool-detail .md-mermaid {
+  margin: 8px 0; display: flex; justify-content: center; overflow-x: auto;
+  opacity: 0; transition: opacity 0.2s ease;
+}
+.message-bubble__content .md-mermaid[data-ready="true"],
+.message-bubble__tool-detail .md-mermaid[data-ready="true"] { opacity: 1; }
+.message-bubble__content .md-mermaid svg,
+.message-bubble__tool-detail .md-mermaid svg { max-width: 100%; height: auto; }
+.message-bubble__content .md-mermaid--error,
+.message-bubble__tool-detail .md-mermaid--error {
+  display: block; opacity: 1; color: #f87171;
+  background: #111127; border-radius: 6px; padding: 8px 10px;
+}
+.message-bubble__content video, .message-bubble__content audio,
+.message-bubble__tool-detail video, .message-bubble__tool-detail audio {
+  max-width: 100%; border-radius: 6px; margin: 4px 0;
+}
+.message-bubble__content audio, .message-bubble__tool-detail audio { width: 100%; }
