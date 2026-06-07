@@ -1,5 +1,5 @@
 /**
- * @claude-code-browser/agent-core
+ * @fineguide-tesseract/agent-core
  *
  * Transport-agnostic orchestration shared by the native-messaging host and the
  * Electron desktop app. The AgentManager talks to the Claude Agent SDK and

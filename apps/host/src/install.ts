@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Claude Code Browser — All-in-one installer.
+ * Fineguide Tesseract — All-in-one installer.
  *
  * Usage:
  *   npx claude-code-browser install [extension-id]
@@ -78,14 +78,20 @@ function chromeProfiles(): string[] {
   return ['Default', ...Array.from({ length: 10 }, (_, i) => `Profile ${i + 1}`)];
 }
 
+/** Extension display names this host recognises. "Fineguide Tesseract" is the
+ *  current name; "Claude Code Browser" is the legacy store listing kept so the
+ *  installer still finds an already-installed older extension. */
+const EXTENSION_NAMES = ['Fineguide Tesseract', 'Claude Code Browser'];
+
 function manifestIsCcb(manifestPath: string): boolean {
   if (!existsSync(manifestPath)) return false;
   try {
-    return readFileSync(manifestPath, 'utf-8').includes('Claude Code Browser');
+    const txt = readFileSync(manifestPath, 'utf-8');
+    return EXTENSION_NAMES.some((n) => txt.includes(n));
   } catch { return false; }
 }
 
-/** Find all extension IDs whose manifest identifies them as Claude Code Browser.
+/** Find all extension IDs whose manifest identifies them as Fineguide Tesseract.
  *  Catches both:
  *   - Web Store / unpacked-into-Extensions installs at <profile>/Extensions/<id>/<ver>/manifest.json
  *   - Dev unpacked extensions referenced from Secure Preferences with an absolute path field */
@@ -126,7 +132,7 @@ function detectInstalledExtensionIds(): string[] {
           for (const [id, entry] of Object.entries(settings)) {
             if (!/^[a-z]{32}$/.test(id)) continue;
             // Direct manifest.name match
-            if (entry.manifest?.name === 'Claude Code Browser') {
+            if (entry.manifest?.name && EXTENSION_NAMES.includes(entry.manifest.name)) {
               found.add(id);
               continue;
             }
@@ -212,7 +218,7 @@ function installNativeHost(extensionIds: string[]): boolean {
 
   const manifest = {
     name: HOST_NAME,
-    description: 'Claude Code Browser - Native Messaging Host',
+    description: 'Fineguide Tesseract - Native Messaging Host',
     path: execPath,
     type: 'stdio',
     allowed_origins: ids.map((id) => `chrome-extension://${id}/`),
@@ -305,7 +311,7 @@ function printExtensionInstallInstructions(): void {
 
 function install(explicitId?: string): void {
   console.log('');
-  console.log('  Claude Code Browser — Setup');
+  console.log('  Fineguide Tesseract — Setup');
   console.log('  ═══════════════════════════');
   console.log('');
 
@@ -333,7 +339,7 @@ function install(explicitId?: string): void {
     console.log('  Please provide your extension ID:');
     console.log('    1. Open chrome://extensions');
     console.log('    2. Enable "Developer mode"');
-    console.log('    3. Find "Claude Code Browser" and copy the ID');
+    console.log('    3. Find "Fineguide Tesseract" and copy the ID');
     console.log('    4. Run: npx claude-code-browser install <extension-id>');
     console.log('');
     process.exit(1);
@@ -365,7 +371,7 @@ function install(explicitId?: string): void {
   console.log('');
   console.log('  \x1b[32m✓ Setup complete!\x1b[0m');
   console.log('');
-  console.log('  Open the Claude Code Browser side panel in Chrome to start.');
+  console.log('  Open the Fineguide Tesseract side panel in Chrome to start.');
   console.log('');
 }
 
@@ -408,7 +414,7 @@ function uninstall(): void {
   }
 
   console.log('');
-  ok('Claude Code Browser uninstalled');
+  ok('Fineguide Tesseract uninstalled');
   console.log('');
 }
 
@@ -425,7 +431,7 @@ switch (command) {
     break;
   default:
     console.log('');
-    console.log('  Claude Code Browser');
+    console.log('  Fineguide Tesseract');
     console.log('');
     console.log('  Usage:');
     console.log('    npx claude-code-browser install [extension-id]   Install everything');

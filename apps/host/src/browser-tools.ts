@@ -6,7 +6,7 @@
 import { z } from 'zod/v4';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { writeNativeMessage, log } from './native-io.js';
-import type { ServerMessage } from '@claude-code-browser/shared';
+import type { ServerMessage } from '@fineguide-tesseract/shared';
 
 // Pending browser request callbacks
 const pendingRequests = new Map<string, {

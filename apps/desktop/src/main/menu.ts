@@ -36,14 +36,28 @@ function buildOpenRecentSubmenu(getWin: GetWin): MenuItemConstructorOptions[] {
   ];
 }
 
-function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
+function buildTemplate(getWin: GetWin, openNewWindow: () => void): MenuItemConstructorOptions[] {
   const isMac = process.platform === 'darwin';
+
+  // Settings. On macOS it lives in the app menu (⌘,) per Apple convention; on
+  // Win/Linux it goes at the bottom of the File menu. The accelerator is only
+  // ever claimed once (whichever menu hosts it) to avoid a duplicate-accelerator.
+  const settingsItem: MenuItemConstructorOptions = {
+    label: 'Settings…',
+    accelerator: 'CmdOrCtrl+,',
+    click: () => send(getWin, 'menu:settings'),
+  };
 
   const fileMenu: MenuItemConstructorOptions = {
     label: 'File',
     submenu: [
-      { label: 'New Task', accelerator: 'CmdOrCtrl+T', click: () => send(getWin, 'menu:newTask') },
-      { label: 'New File…', accelerator: 'CmdOrCtrl+N', click: () => send(getWin, 'menu:newFile') },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+N', click: () => openNewWindow() },
+      // Cmd/Ctrl+T opens a browser tab (Chrome-style); New Task keeps a slot.
+      { label: 'New Browser Tab', accelerator: 'CmdOrCtrl+T', click: () => send(getWin, 'menu:newBrowser') },
+      { label: 'New Task', accelerator: 'CmdOrCtrl+Shift+N', click: () => send(getWin, 'menu:newTask') },
+      { label: 'New File…', accelerator: 'CmdOrCtrl+Alt+N', click: () => send(getWin, 'menu:newFile') },
+      // Reopen the most-recently-closed tab — all kinds (Chrome-style).
+      { label: 'Reopen Closed Tab', accelerator: 'CmdOrCtrl+Shift+T', click: () => send(getWin, 'menu:reopenClosedTab') },
       { type: 'separator' },
       { label: 'Open Folder…', accelerator: 'CmdOrCtrl+O', click: () => send(getWin, 'menu:openFolder') },
       { label: 'Open Recent', submenu: buildOpenRecentSubmenu(getWin) },
@@ -55,6 +69,8 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
       // item visible (discoverability) but don't claim the accelerator.
       { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', registerAccelerator: false, click: () => send(getWin, 'menu:closeTab') },
       { label: 'Close Project', accelerator: 'CmdOrCtrl+Shift+W', click: () => send(getWin, 'menu:closeProject') },
+      // Win/Linux host Settings here; macOS uses the app menu instead.
+      ...(isMac ? [] : [{ type: 'separator' as const }, settingsItem]),
     ],
   };
 
@@ -76,6 +92,9 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
     submenu: [
       { label: 'Toggle Tasks Rail', accelerator: 'CmdOrCtrl+B', click: () => send(getWin, 'menu:toggleTasksRail') },
       { label: 'Toggle State Rail', accelerator: 'CmdOrCtrl+Alt+B', click: () => send(getWin, 'menu:toggleStateRail') },
+      { type: 'separator' },
+      { label: 'Next Tab', accelerator: 'Control+Tab', click: () => send(getWin, 'menu:nextTab') },
+      { label: 'Previous Tab', accelerator: 'Control+Shift+Tab', click: () => send(getWin, 'menu:prevTab') },
       { type: 'separator' },
       { role: 'reload' },
       { role: 'toggleDevTools' },
@@ -107,7 +126,7 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
     label: 'Help',
     role: 'help',
     submenu: [
-      { label: 'About Claude Code Browser', click: () => send(getWin, 'menu:about') },
+      { label: 'About Fineguide Tesseract', click: () => send(getWin, 'menu:about') },
       { type: 'separator' },
       { label: 'Report an Issue…', click: () => { void shell.openExternal(REPO_ISSUES_URL); } },
     ],
@@ -117,6 +136,8 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
     label: app.name,
     submenu: [
       { role: 'about' },
+      { type: 'separator' },
+      settingsItem,
       { type: 'separator' },
       { role: 'hide' },
       { role: 'hideOthers' },
@@ -132,11 +153,11 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
     : [fileMenu, editMenu, viewMenu, goMenu, windowMenu, helpMenu];
 }
 
-export function installAppMenu(getWin: GetWin): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(buildTemplate(getWin)));
+export function installAppMenu(getWin: GetWin, openNewWindow: () => void): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(buildTemplate(getWin, openNewWindow)));
 }
 
 /** Re-build the menu — used when recents change so Open Recent stays fresh. */
-export function refreshAppMenu(getWin: GetWin): void {
-  installAppMenu(getWin);
+export function refreshAppMenu(getWin: GetWin, openNewWindow: () => void): void {
+  installAppMenu(getWin, openNewWindow);
 }

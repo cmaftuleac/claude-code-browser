@@ -1,5 +1,5 @@
 {
-  "name": "@claude-code-browser/agent-core",
+  "name": "@fineguide-tesseract/agent-core",
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
@@ -25,10 +25,10 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.2.87"
+    "@anthropic-ai/claude-agent-sdk": "0.2.112"
   },
   "devDependencies": {
-    "@claude-code-browser/shared": "*",
+    "@fineguide-tesseract/shared": "*",
     "@types/node": "^22.0.0"
   }
 }

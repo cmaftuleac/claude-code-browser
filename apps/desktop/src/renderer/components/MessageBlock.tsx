@@ -1,10 +1,10 @@
 import { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { ChevronDown, ChevronRight, Brain, Wrench, AlertTriangle, Copy, FileText } from 'lucide-react';
+import { ChevronDown, ChevronRight, Brain, Wrench, AlertTriangle, Copy, FileText, Paperclip } from 'lucide-react';
+import { Markdown } from '../lib/markdown';
 import type { Block } from '../stores/tasks-store';
 import { ContextMenu, type CtxItem } from './ContextMenu';
+import { PermissionRequestCard } from './PermissionRequestCard';
 
 const ANIM = { duration: 0.2, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -25,7 +25,7 @@ function blockContextItems(anchor: MenuAnchor): CtxItem[] {
   return items;
 }
 
-export function MessageBlock({ block }: { block: Block }) {
+export function MessageBlock({ block, taskId }: { block: Block; taskId: string }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<MenuAnchor | null>(null);
 
@@ -37,6 +37,12 @@ export function MessageBlock({ block }: { block: Block }) {
   };
 
   if (block.kind === 'user') {
+    // Anchors are stored structurally on the block (send() injects no `<tag>`
+    // markers into the text), so render them as a chip row rather than parsing
+    // the content. Both anchors and images are absent for resumed sessions.
+    const anchors = block.anchors ?? [];
+    const images = block.images ?? [];
+    const files = block.files ?? [];
     return (
       <>
         <motion.div
@@ -48,7 +54,33 @@ export function MessageBlock({ block }: { block: Block }) {
           className="block block--user"
           onContextMenu={(e) => openMenu(e, block.content)}
         >
-          {block.content}
+          {anchors.length > 0 && (
+            <div className="block--user__chips">
+              {anchors.map((a, i) => (
+                <span className="block--user__chip" key={`${i}-${a.selector}`} title={a.domPath}>
+                  &lt;{a.tagName}&gt;
+                </span>
+              ))}
+            </div>
+          )}
+          {images.length > 0 && (
+            <div className="block--user__images">
+              {images.map((src, i) => (
+                <img key={`${i}-${src.slice(0, 32)}`} src={src} alt="attachment" />
+              ))}
+            </div>
+          )}
+          {files.length > 0 && (
+            <div className="block--user__files">
+              {files.map((f, i) => (
+                <span className="block--user__file" key={`${i}-${f.name}`} title={f.name}>
+                  <Paperclip size={12} strokeWidth={1.75} />
+                  {f.name}
+                </span>
+              ))}
+            </div>
+          )}
+          {block.content && <span className="block--user__text">{block.content}</span>}
         </motion.div>
         {menu && <ContextMenu x={menu.x} y={menu.y} items={blockContextItems(menu)} onDismiss={() => setMenu(null)} />}
       </>
@@ -67,7 +99,7 @@ export function MessageBlock({ block }: { block: Block }) {
           className="block block--assistant"
           onContextMenu={(e) => openMenu(e, block.content)}
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.content}</ReactMarkdown>
+          <Markdown>{block.content}</Markdown>
         </motion.div>
         {menu && <ContextMenu x={menu.x} y={menu.y} items={blockContextItems(menu)} onDismiss={() => setMenu(null)} />}
       </>
@@ -80,6 +112,10 @@ export function MessageBlock({ block }: { block: Block }) {
 
   if (block.kind === 'tool') {
     return <CollapsibleCard icon={<Wrench size={12} strokeWidth={1.75} />} label={block.toolName === '_notice_' ? 'Notice' : block.toolName} body={block.summary} mono />;
+  }
+
+  if (block.kind === 'permission') {
+    return <PermissionRequestCard block={block} taskId={taskId} />;
   }
 
   // system

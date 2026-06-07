@@ -6,15 +6,19 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 
-export function scanSlashCommands(): Array<{ name: string; description: string; hint?: string }> {
+export function scanSlashCommands(projectRoot?: string): Array<{ name: string; description: string; hint?: string }> {
   const commands: Array<{ name: string; description: string; hint?: string }> = [];
   const seen = new Set<string>();
 
+  // Scope project-local commands/skills to the WINDOW's open project (not
+  // process.cwd(), which is the app's launch dir) so a project's `.claude/`
+  // commands actually surface — matching how Claude Code resolves them.
+  const projectBase = projectRoot || process.cwd();
   const dirs = [
     join(homedir(), '.claude', 'skills'),
     join(homedir(), '.claude', 'commands'),
-    join(process.cwd(), '.claude', 'skills'),
-    join(process.cwd(), '.claude', 'commands'),
+    join(projectBase, '.claude', 'skills'),
+    join(projectBase, '.claude', 'commands'),
   ];
 
   for (const dir of dirs) {

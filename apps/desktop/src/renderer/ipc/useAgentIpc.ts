@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import type { ServerMessage } from '@claude-code-browser/shared';
+import type { ServerMessage } from '@fineguide-tesseract/shared';
 import { useTasksStore } from '../stores/tasks-store';
 import { useConnectionStore } from '../stores/connection-store';
 import { useRecentsStore } from '../stores/recents-store';

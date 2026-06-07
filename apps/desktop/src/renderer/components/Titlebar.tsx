@@ -1,9 +1,10 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, ArrowRight, ChevronRight, LayoutGrid } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronRight, LayoutGrid, Settings as SettingsIcon } from 'lucide-react';
 import { useTasksStore, selectActiveTask } from '../stores/tasks-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import { useUiStore } from '../stores/ui-store';
 import { useNavStore } from '../stores/nav-store';
+import { BrandMark } from './icons/BrandMark';
 
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -38,6 +39,7 @@ export function Titlebar() {
   const toggleTasksRail = useUiStore((s) => s.toggleTasksRail);
   const toggleStateRail = useUiStore((s) => s.toggleStateRail);
   const view = useUiStore((s) => s.view);
+  const openSettings = useUiStore((s) => s.openSettings);
   const closeProject = useWorkspaceStore((s) => s.closeProject);
   const canBack = useNavStore((s) => s.cursor > 0);
   const canForward = useNavStore((s) => s.cursor < s.history.length - 1);
@@ -47,7 +49,7 @@ export function Titlebar() {
   return (
     <div className="titlebar">
       <div className="titlebar__breadcrumb">
-        <span className="titlebar__app">claude-code-browser</span>
+        <span className="titlebar__app"><BrandMark size={14} /> Fineguide Tesseract</span>
         <AnimatePresence initial={false}>
           {projectName && (
             <motion.span
@@ -113,6 +115,13 @@ export function Titlebar() {
                 title="Back to projects"
               >
                 <LayoutGrid size={14} strokeWidth={1.75} />
+              </button>
+              <button
+                className="titlebar__toggle"
+                onClick={() => openSettings()}
+                title="Settings"
+              >
+                <SettingsIcon size={14} strokeWidth={1.75} />
               </button>
               <button
                 className={`titlebar__toggle ${tasksRailOpen ? 'is-on' : 'is-off'}`}

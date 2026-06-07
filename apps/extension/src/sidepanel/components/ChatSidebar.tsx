@@ -1,5 +1,5 @@
 import React from 'react';
-import type { ClientMessage } from '@claude-code-browser/shared';
+import type { ClientMessage } from '@fineguide-tesseract/shared';
 import { useChatStore, selectActiveTitle } from '../stores/chat-store';
 import { MessageList } from './MessageList';
 import { ChatInput } from './ChatInput';

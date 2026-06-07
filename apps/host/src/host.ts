@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Claude Code Browser — Chrome Native Messaging Host.
+ * Fineguide Tesseract — Chrome Native Messaging Host.
  * Minimal startup — heavy imports are lazy-loaded on first use.
  */
 
@@ -12,7 +12,7 @@ import { homedir, platform } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { resolveProjectDir } from './project-dir.js';
-import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
+import type { ClientMessage, ServerMessage } from '@fineguide-tesseract/shared';
 
 // Prevent crashes
 process.on('uncaughtException', (err) => { log('Uncaught exception:', err.message, err.stack ?? ''); });
@@ -339,10 +339,16 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
         clientRequestId: msg.clientRequestId,
         anchors: msg.anchors,
         images: msg.images,
+        files: msg.files,
         url: msg.url,
         origin: msg.origin,
         projectDir: msg.projectDir,
         sources: msg.sources,
+        // Per-conversation run mode from the side panel's picker. The host has no
+        // settings layer, so these (or the orchestrator default) are authoritative.
+        ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
+        ...(msg.effort ? { effort: msg.effort } : {}),
+        ...(msg.model ? { model: msg.model } : {}),
       }).catch((err) => log('sendMessage error:', err instanceof Error ? err.message : String(err)));
       break;
     }
@@ -374,6 +380,18 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
       if (stopped) {
         send({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'idle' });
       }
+      break;
+    }
+
+    case 'agent:set_mode': {
+      const am = await getAgentManager();
+      void am.setRunMode(msg.sessionId, { permissionMode: msg.permissionMode, model: msg.model });
+      break;
+    }
+
+    case 'chat:permission': {
+      const am = await getAgentManager();
+      am.respondToPermission(msg.requestId, { behavior: msg.behavior, updatedInput: msg.updatedInput, persist: msg.persist, message: msg.message });
       break;
     }
 

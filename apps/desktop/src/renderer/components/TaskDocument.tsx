@@ -25,7 +25,7 @@ export function TaskDocument({ taskId }: { taskId: string }) {
     <div className="task-document">
       <div className="task-document__inner">
         <AnimatePresence initial={false}>
-          {blocks.map((b) => <MessageBlock key={b.id} block={b} />)}
+          {blocks.map((b) => <MessageBlock key={b.id} block={b} taskId={taskId} />)}
         </AnimatePresence>
         <div ref={endRef} />
       </div>

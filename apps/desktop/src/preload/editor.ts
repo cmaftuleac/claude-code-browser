@@ -30,12 +30,21 @@ let hovered: HTMLElement | null = null;
 let selected: HTMLElement | null = null;
 const journal: JournalEntry[] = [];
 
+/** Lightweight picker mode (chat element selection). Independent of `mode` so it
+ *  works in both browse and edit without showing the heavy edit chrome. */
+let picking = false;
+let pickerHover: Element | null = null;
+let highlightEl: Element | null = null;
+
 // ── Overlay chrome ───────────────────────────────────────────────────────────
 
 let root: HTMLElement;
 let hoverBox: HTMLElement;
 let selectBox: HTMLElement;
 let toolbar: HTMLElement;
+let pickerOverlay: HTMLElement;
+let pickerTooltip: HTMLElement;
+let highlightBox: HTMLElement;
 const handles: Record<string, HTMLElement> = {};
 
 function isEditorNode(el: Element | null): boolean {
@@ -61,6 +70,12 @@ function injectStyles(): void {
     .ccb-toolbar button { all: unset; color: #ddd; padding: 4px 7px; border-radius: 4px; cursor: pointer; }
     .ccb-toolbar button:hover { background: #444; color: #fff; }
     body.ccb-edit-mode * { cursor: default !important; }
+    .ccb-picker-overlay { border: 2px solid #4aa3ff; background: rgba(74,163,255,0.12); border-radius: 2px; }
+    .ccb-picker-tooltip { pointer-events: none; background: #1e1e1e; color: #ddd; padding: 3px 6px;
+      border-radius: 4px; font: 11px/1.3 -apple-system, system-ui, sans-serif; max-width: 360px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 2px 8px rgba(0,0,0,0.4); height: auto; }
+    .ccb-highlight { border: 2px solid #f59e0b; background: rgba(245,158,11,0.12); border-radius: 2px; }
+    body.ccb-picking, body.ccb-picking * { cursor: crosshair !important; }
   `;
   document.documentElement.appendChild(style);
 }
@@ -79,6 +94,9 @@ function buildChrome(): void {
   root = makeBox('ccb-root');
   hoverBox = makeBox('ccb-hover');
   selectBox = makeBox('ccb-select');
+  pickerOverlay = makeBox('ccb-picker-overlay');
+  pickerTooltip = makeBox('ccb-picker-tooltip');
+  highlightBox = makeBox('ccb-highlight');
 
   for (const dir of HANDLE_DIRS) {
     const h = makeBox(`ccb-handle ${dir}`);
@@ -256,7 +274,7 @@ function pushJournal(entry: JournalEntry): void {
 // ── Pointer interactions ────────────────────────────────────────────────────
 
 function onMouseMove(e: MouseEvent): void {
-  if (mode !== 'edit' || dragging || resizing) return;
+  if (picking || mode !== 'edit' || dragging || resizing) return;
   const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
   if (!el || isEditorNode(el) || el === hovered) return;
   hovered = el;
@@ -265,7 +283,7 @@ function onMouseMove(e: MouseEvent): void {
 }
 
 function onClick(e: MouseEvent): void {
-  if (mode !== 'edit') return;
+  if (picking || mode !== 'edit') return;
   const el = e.target as HTMLElement;
   if (isEditorNode(el)) return;
   e.preventDefault();
@@ -278,7 +296,7 @@ let dragging = false;
 let dragStart = { x: 0, y: 0, baseX: 0, baseY: 0 };
 
 function onSelectablePointerDown(e: PointerEvent): void {
-  if (mode !== 'edit' || !selected) return;
+  if (picking || mode !== 'edit' || !selected) return;
   const target = e.target as HTMLElement;
   if (isEditorNode(target) && !target.classList.contains('ccb-select')) return; // handles/toolbar handle themselves
   // Only start a move when the press lands on the selected element.
@@ -490,6 +508,180 @@ function setMode(next: 'browse' | 'edit'): void {
   if (next === 'browse') deselect();
 }
 
+// ── Picker (lightweight chat element selection) ───────────────────────────────
+
+// Bubble up from SVG internals (path/g/circle…) to their meaningful container,
+// but keep the <svg> itself selectable.
+const SVG_INTERNALS = new Set(['path', 'circle', 'rect', 'line', 'polyline', 'polygon', 'g', 'use', 'defs', 'clippath', 'mask', 'symbol', 'tspan']);
+const INTERACTIVE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'label']);
+
+function resolveTarget(el: Element): Element {
+  if (!SVG_INTERNALS.has(el.tagName.toLowerCase())) return el;
+  let cur: Element | null = el;
+  while (cur) {
+    const t = cur.tagName.toLowerCase();
+    if (INTERACTIVE_TAGS.has(t)) return cur;
+    if (t === 'svg') return cur;
+    if (cur.id || cur.getAttribute('data-testid')) return cur;
+    cur = cur.parentElement;
+  }
+  return el;
+}
+
+function describeElement(el: Element): string {
+  const id = el.id ? `#${el.id}` : '';
+  const classes = Array.from(el.classList).slice(0, 3).map((c) => `.${c}`).join('');
+  const text = (el.textContent ?? '').trim().slice(0, 30);
+  return `<${el.tagName.toLowerCase()}${id}${classes}>${text ? ` "${text}"` : ''}`;
+}
+
+function onPickerMove(e: MouseEvent): void {
+  if (!picking) return;
+  let el = document.elementFromPoint(e.clientX, e.clientY);
+  if (!el || isEditorNode(el)) return;
+  el = resolveTarget(el);
+  pickerHover = el;
+  positionOverlay(pickerOverlay, el as HTMLElement);
+  pickerTooltip.textContent = describeElement(el);
+  pickerTooltip.style.display = 'block';
+  pickerTooltip.style.left = `${e.clientX + 12}px`;
+  pickerTooltip.style.top = `${e.clientY + 12}px`;
+}
+
+function commitPick(el: Element): void {
+  ipcRenderer.sendToHost('editor:picked', { anchor: buildAnchor(el as HTMLElement), treePath: computeElementPath(el) });
+  deactivatePicker();
+}
+
+function onPickerClick(e: MouseEvent): void {
+  if (!picking) return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  const el = pickerHover ?? resolveTarget(e.target as Element);
+  if (el && !isEditorNode(el)) commitPick(el);
+  else deactivatePicker();
+}
+
+// Disabled form elements (<button disabled>, etc.) swallow click/mousedown in
+// Chromium; pointerdown still fires, so use it as a fallback for those.
+function onPickerPointerDown(e: PointerEvent): void {
+  if (!picking) return;
+  const target = e.target as HTMLElement | null;
+  if (!target) return;
+  const disabled = (target as HTMLButtonElement).disabled === true
+    || target.getAttribute('aria-disabled') === 'true'
+    || target.closest('[disabled], [aria-disabled="true"]') !== null;
+  if (!disabled) return; // the normal click handler will take it
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  commitPick(resolveTarget(target));
+}
+
+function onPickerKey(e: KeyboardEvent): void {
+  if (picking && e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    deactivatePicker(); // cancel without emitting a pick
+  }
+}
+
+function activatePicker(): void {
+  if (picking) { deactivatePicker(); return; } // toggle, matching the extension
+  picking = true;
+  document.body?.classList.add('ccb-picking');
+  document.addEventListener('mousemove', onPickerMove, true);
+  document.addEventListener('click', onPickerClick, true);
+  document.addEventListener('pointerdown', onPickerPointerDown, true);
+  document.addEventListener('keydown', onPickerKey, true);
+}
+
+function deactivatePicker(): void {
+  if (!picking) return;
+  picking = false;
+  pickerHover = null;
+  document.body?.classList.remove('ccb-picking');
+  pickerOverlay.style.display = 'none';
+  pickerTooltip.style.display = 'none';
+  document.removeEventListener('mousemove', onPickerMove, true);
+  document.removeEventListener('click', onPickerClick, true);
+  document.removeEventListener('pointerdown', onPickerPointerDown, true);
+  document.removeEventListener('keydown', onPickerKey, true);
+}
+
+// ── DOM tree + highlight (Components sidebar) ──────────────────────────────────
+
+interface TreeNode {
+  tagName: string;
+  id: string;
+  classes: string;
+  path: string;
+  childCount: number;
+  children: TreeNode[];
+  truncated: boolean;
+  anchor: ReturnType<typeof buildAnchor>;
+}
+
+const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'link', 'meta']);
+
+/** Walk the live DOM into a serializable tree. Full depth, no truncation — the
+ *  Components sidebar shows the whole tree (matches the extension). `path` is a
+ *  dot-separated child-index path; document.body is the root (path ''). */
+function buildDomTree(el: Element, path: string): TreeNode {
+  const kids = Array.from(el.children).filter((c) => !SKIP_TAGS.has(c.tagName.toLowerCase()));
+  const children: TreeNode[] = [];
+  for (let i = 0; i < kids.length; i++) {
+    children.push(buildDomTree(kids[i], path ? `${path}.${i}` : String(i)));
+  }
+  return {
+    tagName: el.tagName.toLowerCase(),
+    id: el.id || '',
+    classes: Array.from(el.classList).slice(0, 4).join(' '),
+    path,
+    childCount: kids.length,
+    children,
+    truncated: false,
+    anchor: buildAnchor(el as HTMLElement),
+  };
+}
+
+/** Reverse of the path index: the dot-path of an element relative to body. */
+function computeElementPath(el: Element): string {
+  const parts: number[] = [];
+  let cur: Element | null = el;
+  while (cur && cur !== document.body) {
+    const parent: HTMLElement | null = cur.parentElement;
+    if (!parent) break;
+    const sibs = Array.from(parent.children).filter((c) => !SKIP_TAGS.has(c.tagName.toLowerCase()));
+    parts.unshift(sibs.indexOf(cur));
+    cur = parent;
+  }
+  return parts.join('.');
+}
+
+function showHighlight(el: Element): void {
+  highlightEl = el;
+  positionOverlay(highlightBox, el as HTMLElement);
+}
+
+function removeHighlight(): void {
+  highlightEl = null;
+  highlightBox.style.display = 'none';
+}
+
+function highlightBySelector(selector?: string, xpath?: string): void {
+  removeHighlight();
+  let el: Element | null = null;
+  if (selector) { try { el = document.querySelector(selector); } catch { /* invalid selector */ } }
+  if (!el && xpath) {
+    try {
+      el = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null;
+    } catch { /* invalid xpath */ }
+  }
+  if (el) showHighlight(el);
+}
+
 // ── Host → guest channel ──────────────────────────────────────────────────────
 
 ipcRenderer.on('editor:setMode', (_e, m: 'browse' | 'edit') => setMode(m));
@@ -502,6 +694,11 @@ ipcRenderer.on('editor:selectBySelector', (_e, selector: string) => {
 });
 ipcRenderer.on('editor:requestJournal', () => ipcRenderer.sendToHost('editor:journal', journal));
 ipcRenderer.on('editor:clearJournal', () => { journal.length = 0; ipcRenderer.sendToHost('editor:journal', journal); });
+ipcRenderer.on('editor:activatePicker', () => activatePicker());
+ipcRenderer.on('editor:cancelPicker', () => deactivatePicker());
+ipcRenderer.on('editor:getTree', () => ipcRenderer.sendToHost('editor:tree', { tree: buildDomTree(document.body, '') }));
+ipcRenderer.on('editor:highlight', (_e, p: { selector?: string; xpath?: string }) => highlightBySelector(p.selector, p.xpath));
+ipcRenderer.on('editor:removeHighlight', () => removeHighlight());
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
@@ -512,8 +709,13 @@ function boot(): void {
   document.addEventListener('pointerdown', onSelectablePointerDown, true);
   window.addEventListener('pointermove', onPointerMove, true);
   window.addEventListener('pointerup', onPointerUp, true);
-  window.addEventListener('scroll', () => { if (selected) refreshSelectionChrome(); }, true);
-  window.addEventListener('resize', () => { if (selected) refreshSelectionChrome(); });
+  const reposition = (): void => {
+    if (selected) refreshSelectionChrome();
+    if (picking && pickerHover) positionOverlay(pickerOverlay, pickerHover as HTMLElement);
+    if (highlightEl) positionOverlay(highlightBox, highlightEl as HTMLElement);
+  };
+  window.addEventListener('scroll', reposition, true);
+  window.addEventListener('resize', reposition);
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && mode === 'edit') deselect();
   });

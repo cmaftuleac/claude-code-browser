@@ -3,30 +3,41 @@
  */
 
 import { listSessions, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import type { SessionInfo, SessionMessage, SessionMessageBlock } from '@claude-code-browser/shared';
+import type { SessionInfo, SessionMessage, SessionMessageBlock } from '@fineguide-tesseract/shared';
 
 export class SessionStore {
-  async getSessions(): Promise<SessionInfo[]> {
+  /** List resumable sessions. When `projectDir` is given, only sessions whose
+   *  cwd matches that project are returned, so each window's Resume list is
+   *  scoped to its own project (multi-project / multi-window). */
+  async getSessions(projectDir?: string): Promise<SessionInfo[]> {
     try {
-      const sessions = await listSessions({ limit: 50 });
-      return sessions.map((s) => {
-        // Prefer firstPrompt (literal first user message, multi-line preserved) over
-        // summary (often newline-collapsed, which defeats line-based metadata stripping).
-        // Order: user-set title → first prompt → summary → id fallback.
-        const fromFirst = stripPromptPrefix(s.firstPrompt ?? '').slice(0, 80);
-        const fromSummary = stripPromptPrefix(s.summary ?? '').slice(0, 80);
-        const title =
-          s.customTitle ||
-          fromFirst ||
-          fromSummary ||
-          `Session ${s.sessionId.slice(0, 8)}`;
-        return {
-          id: s.sessionId,
-          title,
-          lastModified: s.lastModified,
-          cwd: s.cwd,
-        };
-      });
+      // Filter by project SERVER-SIDE (the SDK's `dir` option) so the 50-row
+      // limit applies per-project, not machine-wide — otherwise a project's
+      // older sessions silently vanish behind 50 newer sessions in other
+      // projects. `dir` also includes the repo's git-worktree sessions, which a
+      // client-side cwd-equality filter would wrongly drop, so we don't re-filter.
+      const sessions = projectDir
+        ? await listSessions({ dir: projectDir, limit: 50 })
+        : await listSessions({ limit: 50 });
+      return sessions
+        .map((s) => {
+          // Prefer firstPrompt (literal first user message, multi-line preserved) over
+          // summary (often newline-collapsed, which defeats line-based metadata stripping).
+          // Order: user-set title → first prompt → summary → id fallback.
+          const fromFirst = stripPromptPrefix(s.firstPrompt ?? '').slice(0, 80);
+          const fromSummary = stripPromptPrefix(s.summary ?? '').slice(0, 80);
+          const title =
+            s.customTitle ||
+            fromFirst ||
+            fromSummary ||
+            `Session ${s.sessionId.slice(0, 8)}`;
+          return {
+            id: s.sessionId,
+            title,
+            lastModified: s.lastModified,
+            cwd: s.cwd,
+          };
+        });
     } catch (err) {
       return [];
     }

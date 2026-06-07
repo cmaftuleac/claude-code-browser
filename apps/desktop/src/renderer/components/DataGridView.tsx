@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Copy, Rows2, Columns2 } from 'lucide-react';
 import { useWorkspaceStore } from '../stores/workspace-store';
+import { useFileContextMenu, copyText } from '../hooks/useFileContextMenu';
+import type { CtxItem } from './ContextMenu';
 import { fileKind } from '../lib/file-kind';
 import { parseCsv } from '../lib/csv-parse';
 import { createRemoteAsyncBuffer } from '../lib/remote-async-buffer';
@@ -70,6 +72,7 @@ export function DataGridView({ path }: { path: string }) {
   const [viewportH, setViewportH] = useState(0);
   const [viewportW, setViewportW] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { open, menu } = useFileContextMenu(path);
 
   // Attach measurement via a callback ref so we wire it the moment the
   // scroll container is *actually* mounted — which happens AFTER state
@@ -283,6 +286,8 @@ export function DataGridView({ path }: { path: string }) {
           className="grid-cell"
           style={{ position: 'absolute', left: 80 + c * COL_W, width: COL_W, height: ROW_H, lineHeight: `${ROW_H}px` }}
           title={formatCell(row?.[c])}
+          data-row={r}
+          data-col={c}
         >
           {formatCell(row?.[c])}
         </div>,
@@ -316,8 +321,30 @@ export function DataGridView({ path }: { path: string }) {
     );
   }
 
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const extras: CtxItem[] = [];
+    const cellEl = (e.target as Element | null)?.closest('.grid-cell') as HTMLElement | null;
+    const colAttr = cellEl?.dataset.col;
+    const rowAttr = cellEl?.dataset.row;
+    if (colAttr != null) {
+      const c = Number(colAttr);
+      if (rowAttr != null) {
+        const r = Number(rowAttr);
+        const cellVal = formatCell(rows[r]?.[c]);
+        const rowVals = (rows[r] ?? []).map(formatCell).join('\t');
+        extras.push(
+          { kind: 'item', label: 'Copy Cell', icon: <Copy size={13} strokeWidth={1.75} />, onActivate: () => copyText(cellVal) },
+          { kind: 'item', label: 'Copy Row', icon: <Rows2 size={13} strokeWidth={1.75} />, onActivate: () => copyText(rowVals) },
+        );
+      }
+      const colVals = [columns[c], ...rows.map((row) => formatCell(row?.[c]))].join('\n');
+      extras.push({ kind: 'item', label: `Copy Column (${columns[c] ?? ''})`, icon: <Columns2 size={13} strokeWidth={1.75} />, onActivate: () => copyText(colVals) });
+    }
+    open(e, extras);
+  };
+
   return (
-    <div className="grid-view">
+    <div className="grid-view" onContextMenu={onContextMenu}>
       <div className="grid-view__head" style={{ width: Math.max(totalW, viewportW), transform: `translateX(${-scrollLeft}px)` }}>
         <div className="grid-rownum grid-rownum--head" style={{ position: 'absolute', left: 0, width: 80, height: HEADER_H, lineHeight: `${HEADER_H}px` }}>#</div>
         {columns.slice(firstColIdx, lastColIdx + 1).map((col, idx) => (
@@ -326,6 +353,7 @@ export function DataGridView({ path }: { path: string }) {
             className="grid-cell grid-cell--head"
             style={{ position: 'absolute', left: 80 + (firstColIdx + idx) * COL_W, width: COL_W, height: HEADER_H, lineHeight: `${HEADER_H}px` }}
             title={col}
+            data-col={firstColIdx + idx}
           >
             {col}
           </div>
@@ -356,6 +384,7 @@ export function DataGridView({ path }: { path: string }) {
       <div className="grid-view__foot">
         {source.toUpperCase()} · {numRows.toLocaleString()} of {totalRows.toLocaleString()} rows{truncated ? ' · truncated' : ''} · {columns.length} columns
       </div>
+      {menu}
     </div>
   );
 }

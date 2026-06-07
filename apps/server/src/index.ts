@@ -1,7 +1,7 @@
 /**
- * Claude Code Browser — local server (web-mode backend).
+ * Fineguide Tesseract — local server (web-mode backend).
  *
- * Runs the agent (via @claude-code-browser/agent-core) and exposes:
+ * Runs the agent (via @fineguide-tesseract/agent-core) and exposes:
  *  - WebSocket at /ws    → ClientMessage/ServerMessage protocol (same as Electron main).
  *  - HTTP /fs/*          → readDir/readFile/writeFile + root probe.
  *  - WS fs:changed       → recursive file-watcher events pushed to clients.
@@ -22,13 +22,41 @@ import { existsSync, mkdirSync, openSync, readSync, closeSync, statSync, readFil
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
-import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
+import { randomUUID } from 'node:crypto';
+import type { ClientMessage, ServerMessage, HostInfo, IceServerConfig, BrowserInputEvent } from '@fineguide-tesseract/shared';
+import { encodeFrame as encodeFrameWire } from '@fineguide-tesseract/shared';
+import { requireAuth, verifyWsClient, REQUIRE_AUTH, userIdFromRequest } from './auth-guard.js';
+import { handleServerBrowserRequest, startMirror, stopMirror, dispatchInput, navMirror } from './browser-host.js';
+import { buildIceServers } from './turn.js';
+import { resolveUserRoot, scopeBrowserId, sanitizeUserId } from './users.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.CCB_PORT ?? 9315);
 const ROOT = resolve(process.env.CCB_ROOT ?? process.cwd());
 const VERSION = '0.2.0';
+
+// ── WebRTC ICE/TURN (signaling-only; media stays peer-to-peer) ───────────────
+const STUN_URL = process.env.STUN_URL ?? 'stun:stun.l.google.com:19302';
+const TURN_HOST = process.env.TURN_HOST ?? ''; // e.g. turn:turn.example.com:3478
+const TURN_SECRET = process.env.TURN_SECRET ?? ''; // coturn static-auth-secret
+
+/** ICE servers for clients/hosts — STUN + (when configured) a short-lived coturn
+ *  credential. See ./turn.ts (pure + unit-tested). */
+function iceServers(): IceServerConfig[] {
+  return buildIceServers({ stunUrl: STUN_URL, turnHost: TURN_HOST, turnSecret: TURN_SECRET });
+}
+
+// ── Per-user workspace isolation (Mode A) ────────────────────────────────────
+/** Each authenticated user gets their own subtree under CCB_ROOT, so workspaces
+ *  AND Claude Code sessions (which the SDK scopes by cwd) don't collide between
+ *  tenants. Auth off (local dev) → the shared ROOT, unchanged. Path logic lives
+ *  in ./users.ts (pure + unit-tested); here we also create the dir. */
+function userRoot(userId: string | null): string {
+  const dir = resolveUserRoot(ROOT, userId, REQUIRE_AUTH);
+  if (dir !== ROOT) { try { mkdirSync(dir, { recursive: true }); } catch { /* ignore */ } }
+  return dir;
+}
 
 const BINARY_EXT = new Set([
   'png','jpg','jpeg','gif','webp','ico','bmp','avif','tiff','tif','heic',
@@ -49,117 +77,428 @@ const IGNORED = new Set(['.git', 'node_modules', '.DS_Store']);
 
 // ── WS clients + broadcast ──────────────────────────────────────────────────
 
-const clients = new Set<WebSocket>();
+// ── Host registry + client connections ───────────────────────────────────────
+//
+// The web client multiplexes everything over ONE control WS (envelopes), and
+// targets a *host* by hostId: the cloud server (this process, in-process agent)
+// or — Mode B — one of the user's Electron machines that dialed in + registered.
+// Media never flows here; only WebRTC signaling does.
+
+const SERVER_HOST_ID = 'server';
+
+interface HostEntry {
+  info: HostInfo;
+  /** null for the in-process server host; the host-side socket for remote (electron) hosts. */
+  ws: WebSocket | null;
+  /** null = visible to every account (the server host); else scoped to one user. */
+  ownerUserId: string | null;
+}
+const hosts = new Map<string, HostEntry>();
+hosts.set(SERVER_HOST_ID, {
+  info: { hostId: SERVER_HOST_ID, name: 'Cloud server', kind: 'server', online: true, caps: ['browser', 'webrtc', 'fs'] },
+  ws: null,
+  ownerUserId: null,
+});
+
+interface ClientConn {
+  ws: WebSocket;
+  userId: string | null;
+  /** Stable per-connection id, stamped onto envelopes relayed to a remote host
+   *  so the host can target its WebRTC answer/ICE back to THIS client (B9). */
+  clientId: string;
+  /** Host this client's agent/browser/signal traffic targets. */
+  selectedHostId: string;
+  /** browserIds this client is currently mirroring (receiving frames for). */
+  attached: Set<string>;
+}
+const clients = new Set<ClientConn>();
+/** A remote host's socket → its hostId (host→client relay + cleanup on close). */
+const hostSockets = new Map<WebSocket, string>();
+
 type WireMessage = ServerMessage | { type: 'fs:changed'; paths: string[] } | { type: 'fs:root'; root: string; name: string };
 
-function broadcast(msg: WireMessage): void {
-  const data = JSON.stringify(msg);
+/** Send an enveloped frame to a single socket. */
+function wire(ws: WebSocket, channel: string, payload: unknown, route?: { hostId?: string; browserId?: string; sessionId?: string }): void {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ channel, payload, ...route }));
+}
+
+/** Push fs:changed to each server-host client, filtered to paths inside that
+ *  client's own workspace (B6) so tenants don't see each other's file paths.
+ *  Auth off → every path is under the shared ROOT, so nothing is filtered. */
+function broadcastFsChanged(paths: string[]): void {
   for (const c of clients) {
-    if (c.readyState === c.OPEN) c.send(data);
+    if (c.selectedHostId !== SERVER_HOST_ID || c.ws.readyState !== c.ws.OPEN) continue;
+    const croot = resolveUserRoot(ROOT, c.userId, REQUIRE_AUTH);
+    const visible = paths.filter((p) => isInsideRoot(croot, p));
+    if (visible.length === 0) continue;
+    c.ws.send(JSON.stringify({ channel: 'agent', payload: { type: 'fs:changed', paths: visible } }));
+  }
+}
+
+/** Visible hosts for an account: the always-on server + that user's electron hosts. */
+function hostsForUser(userId: string | null): HostInfo[] {
+  const out: HostInfo[] = [];
+  for (const h of hosts.values()) if (h.ownerUserId === null || h.ownerUserId === userId) out.push(h.info);
+  return out;
+}
+
+/** Push a fresh host:list to every client of the affected account. */
+function announceHosts(userId: string | null): void {
+  for (const c of clients) {
+    if (userId === null || c.userId === userId) wire(c.ws, 'host', { type: 'host:list', hosts: hostsForUser(c.userId) });
+  }
+}
+
+/** Forward a client envelope to a remote (electron) host's socket. Returns false if offline. */
+function relayToHost(hostId: string, env: unknown): boolean {
+  const h = hosts.get(hostId);
+  if (!h || !h.ws || h.ws.readyState !== h.ws.OPEN) return false;
+  h.ws.send(JSON.stringify(env));
+  return true;
+}
+
+/** Forward a host→client envelope to clients bound to that host. If the host
+ *  echoed a `clientId` (e.g. a WebRTC answer/ICE for a specific viewer), deliver
+ *  only to that client; otherwise fan out (e.g. the shared agent stream). */
+function relayToClients(hostId: string, env: unknown): void {
+  const data = JSON.stringify(env);
+  const targetClientId = (env as { clientId?: string }).clientId;
+  for (const c of clients) {
+    if (c.selectedHostId !== hostId || c.ws.readyState !== c.ws.OPEN) continue;
+    if (targetClientId && c.clientId !== targetClientId) continue;
+    c.ws.send(data);
+  }
+}
+
+// ── host / signal / browser channel handlers (server host, in-process) ───────
+
+function handleHostChannel(conn: ClientConn, payload: Record<string, unknown> | undefined): void {
+  const type = payload?.type;
+  if (type === 'host:list') { wire(conn.ws, 'host', { type: 'host:list', hosts: hostsForUser(conn.userId) }); return; }
+  if (type === 'host:select' && typeof payload?.hostId === 'string') { conn.selectedHostId = payload.hostId; return; }
+  if (type === 'host:register' && typeof payload?.name === 'string') {
+    // Mode B: promote this socket to a remote (electron) host owned by this
+    // account. Validate/clamp the client-supplied fields (B8): a sanitized,
+    // length-capped deviceId keeps the hostId well-formed; caps must be strings.
+    const name = (payload.name as string).slice(0, 80) || 'Device';
+    const platform = typeof payload.platform === 'string' ? payload.platform.slice(0, 32) : undefined;
+    const deviceId = (typeof payload.deviceId === 'string' ? payload.deviceId : '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || randomUUID().slice(0, 8);
+    const caps = Array.isArray(payload.caps)
+      ? (payload.caps.filter((x) => typeof x === 'string') as string[]).slice(0, 16)
+      : ['browser', 'webrtc'];
+    const hostId = `electron:${conn.userId ?? 'local'}:${deviceId}`;
+    hosts.set(hostId, {
+      info: { hostId, name, kind: 'electron', platform, online: true, caps },
+      ws: conn.ws,
+      ownerUserId: conn.userId,
+    });
+    hostSockets.set(conn.ws, hostId);
+    announceHosts(conn.userId);
+    return;
+  }
+  // host:heartbeat → no-op; the live socket is the presence signal.
+}
+
+// ── Fallback frame relay (binary `frame` channel over the one WS) ────────────
+//
+// *** DISABLED FOR NOW (flag below). *** The browser mirror uses direct P2P
+// WebRTC only; this JPEG-over-WS path is the degraded fallback for networks/
+// hosts where WebRTC can't establish. The implementation is kept intact behind
+// the flag — set it true (here AND in the client's WS_FRAME_FALLBACK in
+// WebBrowserMirror.tsx) to re-enable. While disabled, the server-host attach
+// advertises `transport: 'webrtc'` and does NOT start a CDP screencast.
+//
+// Wire layout (see ws-protocol.ts): [u8 ver=1][u8 flags(bit0 keyframe)]
+// [u8 idLen][idBytes][u32 seq][jpeg payload]. The client demuxes by browserId
+// and draws onto a <canvas>. JPEG frames are all keyframes.
+// Typed `boolean` (not the literal `false`) so the gated blocks below aren't
+// reported as statically-unreachable code.
+const WS_FRAME_FALLBACK: boolean = false;
+// Mirror viewers keyed by the SCOPED page key (scopeBrowserId(userId, browserId)),
+// so screencast lifecycle + per-stream sequencing are per-tenant. Each frame is
+// tagged with the RAW browserId the client knows (carried in the attach closure).
+const mirrorViewers = new Map<string, Set<ClientConn>>();
+const frameSeqs = new Map<string, number>();
+function nextFrameSeq(scopedKey: string): number {
+  const n = ((frameSeqs.get(scopedKey) ?? 0) + 1) >>> 0;
+  frameSeqs.set(scopedKey, n);
+  return n;
+}
+/** Encode + push a JPEG frame to every viewer of a scoped mirror key. JPEG → all
+ *  keyframes. Wire format + matching decoder live in @fineguide-tesseract/shared. */
+function sendFrameToViewers(scopedKey: string, rawBrowserId: string, jpeg: Buffer): void {
+  const viewers = mirrorViewers.get(scopedKey);
+  if (!viewers || viewers.size === 0) return;
+  const buf = encodeFrameWire(rawBrowserId, jpeg, { keyframe: true, seq: nextFrameSeq(scopedKey) });
+  for (const c of viewers) if (c.ws.readyState === c.ws.OPEN) c.ws.send(buf);
+}
+/** Drop a viewer from a mirror; stop the screencast when the last one leaves. */
+function dropMirrorViewer(scopedKey: string, conn: ClientConn): void {
+  const viewers = mirrorViewers.get(scopedKey);
+  if (!viewers) return;
+  viewers.delete(conn);
+  if (viewers.size === 0) { mirrorViewers.delete(scopedKey); frameSeqs.delete(scopedKey); void stopMirror(scopedKey); }
+}
+
+/** WebRTC signaling for the SERVER host. This build has no co-located WebRTC
+ *  publisher, so a server-host offer can't be answered here.
+ *  - Fallback ENABLED  → steer the client to JPEG frames.
+ *  - Fallback DISABLED → leave the offer unanswered (Mode A server-host live
+ *    mirror is unavailable until the GStreamer publisher lands; Mode B answers
+ *    via the Electron host through relayToHost, not this handler). */
+function handleSignal(conn: ClientConn, env: { browserId?: unknown; payload?: unknown }): void {
+  const browserId = typeof env.browserId === 'string' ? env.browserId : 'default';
+  const payload = env.payload as Record<string, unknown> | undefined;
+  if (WS_FRAME_FALLBACK && payload?.type === 'signal:offer') {
+    wire(conn.ws, 'browser', { type: 'browser:config', transport: 'frames', codec: 'jpeg', width: 1280, height: 800 }, { browserId });
+  }
+}
+
+/** Interactive control of the server-host page — attach/detach/input/nav.
+ *  The page is keyed by the per-tenant scoped id (B3); messages back to the
+ *  client carry the RAW browserId the client knows. */
+function handleBrowserControl(conn: ClientConn, env: { browserId?: unknown; payload?: unknown }): void {
+  const browserId = typeof env.browserId === 'string' ? env.browserId : 'default';
+  const key = scopeBrowserId(conn.userId, browserId);
+  const payload = env.payload as Record<string, unknown> | undefined;
+  const type = payload?.type;
+  if (type === 'browser:attach') {
+    conn.attached.add(browserId);
+    let viewers = mirrorViewers.get(key);
+    if (!viewers) { viewers = new Set(); mirrorViewers.set(key, viewers); }
+    viewers.add(conn);
+    void (async () => {
+      // WS frame fallback DISABLED → don't start the CDP screencast; advertise
+      // WebRTC so the client negotiates a direct peer connection. (When the
+      // fallback is re-enabled, startMirror streams JPEG frames instead.)
+      let vp = { width: 1280, height: 800 };
+      if (WS_FRAME_FALLBACK) {
+        vp = await startMirror(key, (jpeg) => sendFrameToViewers(key, browserId, jpeg));
+      }
+      wire(conn.ws, 'browser', { type: 'browser:config', transport: WS_FRAME_FALLBACK ? 'frames' : 'webrtc', codec: 'jpeg', width: vp.width, height: vp.height }, { browserId });
+      if (typeof payload?.url === 'string' && payload.url) {
+        const st = await navMirror(key, 'goto', payload.url);
+        wire(conn.ws, 'browser', { type: 'browser:state', url: st.url, title: st.title, canGoBack: false, canGoForward: false, loading: false }, { browserId });
+      }
+    })().catch((err) => wire(conn.ws, 'notify', { type: 'notify', level: 'error', message: `Browser unavailable: ${err instanceof Error ? err.message : String(err)}` }));
+    return;
+  }
+  if (type === 'browser:detach') {
+    conn.attached.delete(browserId);
+    dropMirrorViewer(key, conn);
+    return;
+  }
+  if (type === 'browser:input' && payload?.event) {
+    void dispatchInput(key, payload.event as BrowserInputEvent).catch(() => { /* drop a bad event */ });
+    return;
+  }
+  if (type === 'browser:nav' && typeof payload?.action === 'string') {
+    void navMirror(key, payload.action as 'back' | 'forward' | 'reload' | 'goto', payload.url as string | undefined)
+      .then((st) => wire(conn.ws, 'browser', { type: 'browser:state', url: st.url, title: st.title, canGoBack: false, canGoForward: false, loading: false }, { browserId }));
+    return;
   }
 }
 
 // ── Agent core (lazy, ESM) ──────────────────────────────────────────────────
+//
+// ONE AgentManager PER USER (B25): the agent stream, session events, and browser
+// requests are delivered only to the owning user's connected tabs — never
+// broadcast to other tenants. SessionStore is shared (it only READS on-disk
+// sessions, scoped by the cwd we pass in). Auth off → a single null-keyed
+// manager + all clients are that one tenant, unchanged from before.
 
-type AnyAgentManager = import('@claude-code-browser/agent-core').AgentManager;
-type AnySessionStore = import('@claude-code-browser/agent-core').SessionStore;
+type AnyAgentManager = import('@fineguide-tesseract/agent-core').AgentManager;
+type AnySessionStore = import('@fineguide-tesseract/agent-core').SessionStore;
 
-let agentManager: AnyAgentManager | null = null;
+const managers = new Map<string, AnyAgentManager>();
 let sessionStore: AnySessionStore | null = null;
-let agentInit: Promise<void> | null = null;
+let corePromise: Promise<typeof import('@fineguide-tesseract/agent-core')> | null = null;
 
-async function ensureAgent(): Promise<void> {
-  if (!agentInit) {
-    agentInit = (async () => {
-      const { AgentManager, SessionStore } = await import('@claude-code-browser/agent-core');
-      agentManager = new AgentManager(
-        (msg) => broadcast(msg),
-        (requestId, action) => {
-          // Browser tools require an embedded webview — no such thing in server mode.
-          agentManager?.sendBrowserResponse(requestId, undefined, `Browser tool '${action}' is unavailable in server mode.`);
-        },
-      );
-      sessionStore = new SessionStore();
-      agentManager.setConfig(ROOT);
-    })();
+/** Deliver a server-host agent message to all of ONE user's connected tabs. */
+function sendToUser(userId: string | null, msg: WireMessage): void {
+  const data = JSON.stringify({ channel: 'agent', payload: msg });
+  for (const c of clients) {
+    if (c.selectedHostId === SERVER_HOST_ID && c.userId === userId && c.ws.readyState === c.ws.OPEN) c.ws.send(data);
   }
-  return agentInit;
 }
 
-async function dispatch(msg: ClientMessage): Promise<void> {
-  await ensureAgent();
+async function getManager(userId: string | null): Promise<AnyAgentManager> {
+  const key = userId ?? '';
+  const existing = managers.get(key);
+  if (existing) return existing;
+  if (!corePromise) corePromise = import('@fineguide-tesseract/agent-core');
+  const { AgentManager, SessionStore } = await corePromise;
+  if (!sessionStore) sessionStore = new SessionStore();
+  const manager: AnyAgentManager = new AgentManager(
+    (m) => sendToUser(userId, m), // only THIS user's tabs
+    (requestId, action, params, browserId) => {
+      // Scope the agent's browser to this user (B3) so its CDP page is the user's
+      // own and matches their interactive mirror.
+      void handleServerBrowserRequest(scopeBrowserId(userId, browserId ?? 'default'), action, params)
+        .then((result) => manager.sendBrowserResponse(requestId, result))
+        .catch((err) => manager.sendBrowserResponse(requestId, undefined, err instanceof Error ? err.message : String(err)));
+    },
+  );
+  manager.setConfig(userRoot(userId));
+  managers.set(key, manager);
+  return manager;
+}
+
+// ── Per-user manager reaping ─────────────────────────────────────────────────
+// Drop a tenant's AgentManager 30 min after their LAST connection closes
+// (cancelled if they reconnect within the window), so idle tenants don't
+// accumulate empty managers over a long-running server. Force-disposes any
+// lingering sessions first so no child process is orphaned.
+const MANAGER_REAP_MS = Number(process.env.CCB_MANAGER_REAP_MS ?? 30 * 60 * 1000);
+const managerReapTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function userHasClients(userId: string | null): boolean {
+  for (const c of clients) if (c.userId === userId) return true;
+  return false;
+}
+
+function cancelManagerReap(userId: string | null): void {
+  const key = userId ?? '';
+  const t = managerReapTimers.get(key);
+  if (t) { clearTimeout(t); managerReapTimers.delete(key); }
+}
+
+function scheduleManagerReap(userId: string | null): void {
+  const key = userId ?? '';
+  if (managerReapTimers.has(key)) return; // already pending
+  const t = setTimeout(() => {
+    managerReapTimers.delete(key);
+    if (userHasClients(userId)) return; // reconnected during the window
+    const m = managers.get(key);
+    if (m) { try { m.disposeAll(); } catch { /* ignore */ } managers.delete(key); console.log('[ccb-server] reaped idle agent manager for', key || '(default)'); }
+  }, MANAGER_REAP_MS);
+  if (typeof t.unref === 'function') t.unref(); // never hold the process open
+  managerReapTimers.set(key, t);
+}
+
+async function dispatch(msg: ClientMessage, userId: string | null = null): Promise<void> {
+  const manager = await getManager(userId);
   switch (msg.type) {
     case 'ping':
-      broadcast({ type: 'pong' });
+      sendToUser(userId, { type: 'pong' });
       break;
     case 'health:check':
-      broadcast({ type: 'health', nodeVersion: process.version, claudeCodeInstalled: true, claudeAuthenticated: true });
+      sendToUser(userId, { type: 'health', nodeVersion: process.version, claudeCodeInstalled: true, claudeAuthenticated: true });
       break;
     case 'commands:list':
-      broadcast({ type: 'commands:list', commands: [] });
+      sendToUser(userId, { type: 'commands:list', commands: [] });
       break;
     case 'chat:send':
-      agentManager!.sendMessage({
+      manager.sendMessage({
         message: msg.message,
         sessionId: msg.sessionId,
         clientRequestId: msg.clientRequestId,
         anchors: msg.anchors,
         images: msg.images,
         url: msg.url,
-        projectDir: msg.projectDir ?? ROOT,
+        projectDir: msg.projectDir ?? userRoot(userId),
         sources: msg.sources,
+        // Raw browserId — the per-user manager's onBrowserRequest closure scopes
+        // it by userId (B3), so we must NOT double-scope here.
+        browserId: msg.browserId,
+        // Per-conversation run mode from the web client's picker (no server-side
+        // settings layer → these or the orchestrator default are authoritative).
+        ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
+        ...(msg.effort ? { effort: msg.effort } : {}),
+        ...(msg.model ? { model: msg.model } : {}),
       }).catch((err) => console.error('sendMessage error:', err instanceof Error ? err.message : String(err)));
       break;
     case 'session:list': {
-      const sessions = await sessionStore!.getSessions().catch(() => []);
-      broadcast({ type: 'session:list', sessions });
+      const sessions = await sessionStore!.getSessions(msg.projectDir ?? userRoot(userId)).catch(() => []);
+      sendToUser(userId, { type: 'session:list', sessions });
       break;
     }
     case 'session:resume': {
       const messages = await sessionStore!.getSessionMessages(msg.sessionId).catch(() => []);
-      broadcast({ type: 'session:messages', sessionId: msg.sessionId, messages });
+      sendToUser(userId, { type: 'session:messages', sessionId: msg.sessionId, messages });
       break;
     }
     case 'agent:interrupt':
-      if (agentManager!.interruptSession(msg.sessionId ?? '')) {
-        broadcast({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'idle' });
+      if (manager.interruptSession(msg.sessionId ?? '')) {
+        sendToUser(userId, { type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'idle' });
       }
       break;
+    case 'agent:set_mode':
+      void manager.setRunMode(msg.sessionId, { permissionMode: msg.permissionMode, model: msg.model });
+      break;
+    case 'chat:permission':
+      manager.respondToPermission(msg.requestId, { behavior: msg.behavior, updatedInput: msg.updatedInput, persist: msg.persist, message: msg.message });
+      break;
     case 'config:set':
-      agentManager!.setConfig(msg.projectDir);
+      manager.setConfig(msg.projectDir);
       break;
     case 'sources:set':
-      broadcast({ type: 'sources:set', domain: msg.domain, paths: msg.paths });
+      sendToUser(userId, { type: 'sources:set', domain: msg.domain, paths: msg.paths });
       break;
     case 'browser:response':
-      agentManager!.sendBrowserResponse(msg.requestId, msg.result, msg.error);
+      manager.sendBrowserResponse(msg.requestId, msg.result, msg.error);
       break;
   }
 }
 
 // ── Filesystem ──────────────────────────────────────────────────────────────
 
-function isInsideRoot(p: string): boolean {
-  const rel = relative(ROOT, resolve(p));
+function isInsideRoot(root: string, p: string): boolean {
+  const rel = relative(root, resolve(p));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
+/** The authenticated user id on a request (set by requireAuth), or null. */
+function reqUserId(req: unknown): string | null {
+  return (req as { user?: { sub?: string } }).user?.sub ?? null;
+}
+
+/** The per-request workspace root: each authenticated user's own subtree (B5),
+ *  or the shared ROOT when auth is off. */
+function reqRoot(req: unknown): string {
+  return userRoot(reqUserId(req));
+}
+
+/** Reject a path that escapes the caller's workspace root. Enforced only when
+ *  auth is on (multi-tenant); local dev keeps the prior, unrestricted behavior.
+ *  Returns true (and sends an error) when the path is rejected. */
+function rejectOutsideRoot(req: unknown, res: import('express').Response, p: string): boolean {
+  if (REQUIRE_AUTH && !isInsideRoot(reqRoot(req), p)) {
+    res.status(403).json({ error: 'Path is outside your workspace.' });
+    return true;
+  }
+  return false;
+}
+
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+// Most routes cap JSON bodies at 5mb; the hot-exit snapshot (POST /workspace) can
+// carry unsaved editor content, so it gets a roomier limit.
+const jsonParser = express.json({ limit: '5mb' });
+const snapshotParser = express.json({ limit: '32mb' });
+app.use((req, res, next) => (req.path === '/workspace' ? snapshotParser : jsonParser)(req, res, next));
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
   next();
 });
 
-app.get('/health', (_req, res) => { res.json({ status: 'ok', version: VERSION }); });
-app.get('/fs/root', (_req, res) => { res.json({ root: ROOT, name: basename(ROOT) }); });
+app.get('/health', (_req, res) => { res.json({ status: 'ok', version: VERSION, requireAuth: REQUIRE_AUTH }); });
+
+// Gate filesystem + recents behind a valid JWT when CCB_REQUIRE_AUTH=true (web build).
+// No-op otherwise. /health and the SPA static stay open; /auth lives on the cloud API.
+app.use(['/fs', '/recents', '/workspace'], requireAuth);
+
+app.get('/fs/root', (req, res) => {
+  const r = userRoot((req as unknown as { user?: { sub?: string } }).user?.sub ?? null);
+  res.json({ root: r, name: basename(r) });
+});
 
 app.get('/fs/readDir', async (req, res) => {
-  const dir = String(req.query.dir ?? ROOT);
+  const dir = String(req.query.dir ?? reqRoot(req));
+  if (rejectOutsideRoot(req, res, dir)) return;
   try {
     const entries = await readdir(dir, { withFileTypes: true });
     res.json(entries
@@ -173,6 +512,7 @@ app.get('/fs/readDir', async (req, res) => {
 
 app.get('/fs/readFile', async (req, res) => {
   const p = String(req.query.path ?? '');
+  if (rejectOutsideRoot(req, res, p)) return;
   const ext = p.split('.').pop()?.toLowerCase() ?? '';
   if (BINARY_EXT.has(ext)) { res.json({ error: 'Binary file — not shown in the editor.' }); return; }
   try {
@@ -186,6 +526,7 @@ app.get('/fs/readFile', async (req, res) => {
 
 app.get('/fs/statFile', (req, res) => {
   const p = String(req.query.path ?? '');
+  if (rejectOutsideRoot(req, res, p)) return;
   try {
     const s = statSync(p);
     if (!s.isFile()) { res.json({ error: 'Not a file' }); return; }
@@ -201,6 +542,7 @@ app.get('/fs/statFile', (req, res) => {
  *  scrubber and <img> loader without buffering the whole file into RAM. */
 app.get('/fs/stream', (req, res) => {
   const p = String(req.query.path ?? '');
+  if (rejectOutsideRoot(req, res, p)) return;
   let stat;
   try { stat = statSync(p); } catch (err) { res.status(404).json({ error: String((err as Error).message) }); return; }
   if (!stat.isFile()) { res.status(400).json({ error: 'Not a file' }); return; }
@@ -230,6 +572,7 @@ app.get('/fs/stream', (req, res) => {
 
 app.get('/fs/readBinary', async (req, res) => {
   const p = String(req.query.path ?? '');
+  if (rejectOutsideRoot(req, res, p)) return;
   const CAP = 256 * 1024 * 1024;
   try {
     const s = statSync(p);
@@ -243,6 +586,7 @@ app.get('/fs/readBinary', async (req, res) => {
 
 app.get('/fs/readChunk', (req, res) => {
   const p = String(req.query.path ?? '');
+  if (rejectOutsideRoot(req, res, p)) return;
   const offset = Math.max(0, Math.floor(Number(req.query.offset) || 0));
   const length = Math.min(1024 * 1024, Math.max(0, Math.floor(Number(req.query.length) || 0)));
   if (length === 0) { res.json({ base64: '', bytesRead: 0 }); return; }
@@ -266,7 +610,7 @@ app.post('/fs/renameFile', async (req, res) => {
   if (!trimmed || trimmed.includes('/') || trimmed.includes('\\') || trimmed === '.' || trimmed === '..') {
     res.json({ ok: false, error: 'Invalid name.' }); return;
   }
-  if (!isInsideRoot(oldPath)) { res.json({ ok: false, error: 'Refusing to rename outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), oldPath)) { res.json({ ok: false, error: 'Refusing to rename outside the project root.' }); return; }
   const newPath = join(dirname(oldPath), trimmed);
   if (existsSync(newPath)) { res.json({ ok: false, error: `A file named "${trimmed}" already exists.` }); return; }
   try {
@@ -285,7 +629,7 @@ app.post('/fs/createFile', async (req, res) => {
   if (!trimmed || trimmed.includes('/') || trimmed.includes('\\') || trimmed === '.' || trimmed === '..') {
     res.json({ ok: false, error: 'Invalid name.' }); return;
   }
-  if (!isInsideRoot(parent)) { res.json({ ok: false, error: 'Refusing to create outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), parent)) { res.json({ ok: false, error: 'Refusing to create outside the project root.' }); return; }
   const target = join(parent, trimmed);
   if (existsSync(target)) { res.json({ ok: false, error: `"${trimmed}" already exists.` }); return; }
   try {
@@ -304,7 +648,7 @@ app.post('/fs/createFolder', async (req, res) => {
   if (!trimmed || trimmed.includes('/') || trimmed.includes('\\') || trimmed === '.' || trimmed === '..') {
     res.json({ ok: false, error: 'Invalid name.' }); return;
   }
-  if (!isInsideRoot(parent)) { res.json({ ok: false, error: 'Refusing to create outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), parent)) { res.json({ ok: false, error: 'Refusing to create outside the project root.' }); return; }
   const target = join(parent, trimmed);
   if (existsSync(target)) { res.json({ ok: false, error: `"${trimmed}" already exists.` }); return; }
   try {
@@ -332,11 +676,12 @@ function resolveUniqueName(dir: string, name: string): string {
 app.post('/fs/copyPaths', async (req, res) => {
   const { srcPaths, destDir } = (req.body ?? {}) as { srcPaths?: unknown; destDir?: unknown };
   if (!Array.isArray(srcPaths) || typeof destDir !== 'string') { res.json({ ok: false, error: 'Bad request' }); return; }
-  if (!isInsideRoot(destDir)) { res.json({ ok: false, error: 'Refusing to copy outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), destDir)) { res.json({ ok: false, error: 'Refusing to copy outside the project root.' }); return; }
   try {
     const newPaths: string[] = [];
     for (const src of srcPaths) {
       if (typeof src !== 'string' || !src) continue;
+      if (!isInsideRoot(reqRoot(req), src)) { res.json({ ok: false, error: 'Refusing to copy from outside the project root.' }); return; }
       const target = resolveUniqueName(destDir, basename(src));
       await cp(src, target, { recursive: true, errorOnExist: false, force: false });
       newPaths.push(target);
@@ -350,12 +695,12 @@ app.post('/fs/copyPaths', async (req, res) => {
 app.post('/fs/movePaths', async (req, res) => {
   const { srcPaths, destDir } = (req.body ?? {}) as { srcPaths?: unknown; destDir?: unknown };
   if (!Array.isArray(srcPaths) || typeof destDir !== 'string') { res.json({ ok: false, error: 'Bad request' }); return; }
-  if (!isInsideRoot(destDir)) { res.json({ ok: false, error: 'Refusing to move outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), destDir)) { res.json({ ok: false, error: 'Refusing to move outside the project root.' }); return; }
   try {
     const newPaths: string[] = [];
     for (const src of srcPaths) {
       if (typeof src !== 'string' || !src) continue;
-      if (!isInsideRoot(src)) { res.json({ ok: false, error: 'Refusing to move from outside the project root.' }); return; }
+      if (!isInsideRoot(reqRoot(req), src)) { res.json({ ok: false, error: 'Refusing to move from outside the project root.' }); return; }
       if (dirname(src) === destDir) { newPaths.push(src); continue; }
       const target = resolveUniqueName(destDir, basename(src));
       await rename(src, target);
@@ -378,7 +723,7 @@ app.post('/fs/movePaths', async (req, res) => {
 app.delete('/fs/path', async (req, res) => {
   const p = String(req.query.path ?? '');
   if (!p) { res.json({ ok: false, error: 'Bad request' }); return; }
-  if (!isInsideRoot(p)) { res.json({ ok: false, error: 'Refusing to delete outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), p)) { res.json({ ok: false, error: 'Refusing to delete outside the project root.' }); return; }
   try {
     await rm(p, { recursive: true, force: false });
     res.json({ ok: true });
@@ -390,42 +735,97 @@ app.delete('/fs/path', async (req, res) => {
 // ── Recents (persisted JSON in ~/.ccb/) ────────────────────────────────────
 
 interface RecentProject { path: string; name: string; lastOpenedAt: number; }
-const RECENTS_FILE = join(homedir(), '.ccb', 'recents.json');
 const RECENTS_CAP = 24;
 
-function readRecents(): RecentProject[] {
+// Per-user recents (B24): authenticated users get their own file so project
+// paths don't leak across tenants; auth off → the shared recents.json (unchanged).
+function recentsFile(userId: string | null): string {
+  return join(homedir(), '.ccb', userId ? `recents-${sanitizeUserId(userId)}.json` : 'recents.json');
+}
+
+function readRecents(userId: string | null): RecentProject[] {
   try {
-    const raw = readFileSync(RECENTS_FILE, 'utf-8');
+    const raw = readFileSync(recentsFile(userId), 'utf-8');
     const data = JSON.parse(raw);
     if (!Array.isArray(data)) return [];
     return data.filter((x) => x && typeof x.path === 'string' && typeof x.name === 'string' && typeof x.lastOpenedAt === 'number');
   } catch { return []; }
 }
-function writeRecents(items: RecentProject[]): void {
+function writeRecents(userId: string | null, items: RecentProject[]): void {
   try {
-    const dir = dirname(RECENTS_FILE);
+    const file = recentsFile(userId);
+    const dir = dirname(file);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(RECENTS_FILE, JSON.stringify(items, null, 2), 'utf-8');
+    writeFileSync(file, JSON.stringify(items, null, 2), 'utf-8');
   } catch { /* best-effort */ }
 }
 
-app.get('/recents', (_req, res) => {
-  res.json(readRecents().sort((a, b) => b.lastOpenedAt - a.lastOpenedAt).slice(0, RECENTS_CAP));
+app.get('/recents', (req, res) => {
+  res.json(readRecents(reqUserId(req)).sort((a, b) => b.lastOpenedAt - a.lastOpenedAt).slice(0, RECENTS_CAP));
 });
 
 app.post('/recents', (req, res) => {
+  const uid = reqUserId(req);
   const { path: p, name } = (req.body ?? {}) as { path?: unknown; name?: unknown };
   if (typeof p !== 'string' || typeof name !== 'string') { res.status(400).json({ error: 'Bad request' }); return; }
-  const next = [{ path: p, name, lastOpenedAt: Date.now() }, ...readRecents().filter((x) => x.path !== p)].slice(0, RECENTS_CAP);
-  writeRecents(next);
+  const next = [{ path: p, name, lastOpenedAt: Date.now() }, ...readRecents(uid).filter((x) => x.path !== p)].slice(0, RECENTS_CAP);
+  writeRecents(uid, next);
   res.json(next);
 });
 
 app.delete('/recents', (req, res) => {
+  const uid = reqUserId(req);
   const p = String(req.query.path ?? '');
-  const next = readRecents().filter((x) => x.path !== p);
-  writeRecents(next);
+  const next = readRecents(uid).filter((x) => x.path !== p);
+  writeRecents(uid, next);
   res.json(next);
+});
+
+// ── Workspace snapshots (hot-exit) ──────────────────────────────────────────
+// Open tabs + split layout + unsaved editor content, keyed by project root so a
+// project restores its tabs/layout and preserves unsaved work across reloads and
+// restarts. Per-tenant like recents; mirrors the desktop main `workspaces.json`
+// (object map root→snapshot, MRU-ordered, LRU-capped).
+
+const MAX_WORKSPACES = 30;
+
+function workspacesFile(userId: string | null): string {
+  return join(homedir(), '.ccb', userId ? `workspaces-${sanitizeUserId(userId)}.json` : 'workspaces.json');
+}
+function readWorkspaces(userId: string | null): Record<string, unknown> {
+  try {
+    const obj = JSON.parse(readFileSync(workspacesFile(userId), 'utf-8'));
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : {};
+  } catch { return {}; }
+}
+function writeWorkspaces(userId: string | null, obj: Record<string, unknown>): void {
+  try {
+    const file = workspacesFile(userId);
+    const dir = dirname(file);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(file, JSON.stringify(obj), 'utf-8');
+  } catch { /* best-effort */ }
+}
+
+app.get('/workspace', (req, res) => {
+  const root = String(req.query.root ?? '');
+  if (!root) { res.json(null); return; }
+  res.json(readWorkspaces(reqUserId(req))[root] ?? null);
+});
+
+app.post('/workspace', (req, res) => {
+  const uid = reqUserId(req);
+  const snapshot = (req.body ?? null) as { root?: unknown } | null;
+  const root = snapshot?.root;
+  if (typeof root !== 'string' || !root) { res.status(400).json({ error: 'Bad request' }); return; }
+  const cur = readWorkspaces(uid);
+  delete cur[root];          // re-insert at the end → most-recently-used
+  cur[root] = snapshot;
+  // Prune oldest (keys are insertion-ordered) beyond the cap.
+  const keys = Object.keys(cur);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_WORKSPACES))) delete cur[k];
+  writeWorkspaces(uid, cur);
+  res.json({ ok: true });
 });
 
 // ── Open arbitrary path / create empty project (no native dialog on server) ─
@@ -433,6 +833,7 @@ app.delete('/recents', (req, res) => {
 app.post('/fs/openFolder', async (req, res) => {
   const { path: p } = (req.body ?? {}) as { path?: unknown };
   if (typeof p !== 'string' || !p) { res.status(400).json({ error: 'path required' }); return; }
+  if (rejectOutsideRoot(req, res, p)) return; // multi-tenant: can't open outside your workspace
   try {
     const s = await stat(p);
     if (!s.isDirectory()) { res.status(400).json({ error: 'Not a directory' }); return; }
@@ -452,6 +853,8 @@ app.post('/fs/createProject', async (req, res) => {
   }
   const expandedParent = parent.startsWith('~/') ? join(homedir(), parent.slice(2)) : (parent === '~' ? homedir() : parent);
   const target = join(expandedParent, trimmed);
+  // multi-tenant: a new project must live inside the caller's workspace.
+  if (REQUIRE_AUTH && !isInsideRoot(reqRoot(req), target)) { res.json({ ok: false, error: 'Refusing to create a project outside your workspace.' }); return; }
   if (existsSync(target)) { res.json({ ok: false, error: `A folder named "${trimmed}" already exists.` }); return; }
   try {
     await mkdir(target, { recursive: true });
@@ -464,7 +867,7 @@ app.post('/fs/createProject', async (req, res) => {
 app.post('/fs/writeFile', async (req, res) => {
   const { path: p, content } = (req.body ?? {}) as { path?: unknown; content?: unknown };
   if (typeof p !== 'string' || typeof content !== 'string') { res.json({ ok: false, error: 'Bad request' }); return; }
-  if (!isInsideRoot(p)) { res.json({ ok: false, error: 'Refusing to write outside the project root.' }); return; }
+  if (!isInsideRoot(reqRoot(req), p)) { res.json({ ok: false, error: 'Refusing to write outside the project root.' }); return; }
   try {
     await mkdir(dirname(p), { recursive: true });
     await writeFile(p, content, 'utf-8');
@@ -505,7 +908,7 @@ function startWatching(root: string): void {
       timer = setTimeout(() => {
         const paths = [...pending];
         pending.clear();
-        broadcast({ type: 'fs:changed', paths });
+        broadcastFsChanged(paths);
       }, 120);
     });
   } catch {
@@ -517,26 +920,87 @@ startWatching(ROOT);
 // ── HTTP + WS bootstrap ────────────────────────────────────────────────────
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ server, path: '/ws', verifyClient: verifyWsClient });
 
-wss.on('connection', (ws) => {
-  clients.add(ws);
+wss.on('connection', (ws, req) => {
+  const conn: ClientConn = { ws, userId: userIdFromRequest(req), clientId: randomUUID(), selectedHostId: SERVER_HOST_ID, attached: new Set() };
+  clients.add(conn);
+  cancelManagerReap(conn.userId); // this tenant is active again — keep its manager
   console.log(`[ccb-server] ws client connected (${clients.size} total)`);
 
-  ws.send(JSON.stringify({ type: 'connection:ready', serverVersion: VERSION }));
-  ws.send(JSON.stringify({ type: 'health', nodeVersion: process.version, claudeCodeInstalled: true, claudeAuthenticated: true }));
-  ws.send(JSON.stringify({ type: 'fs:root', root: ROOT, name: basename(ROOT) }));
+  const connRoot = userRoot(conn.userId);
+  wire(ws, 'agent', { type: 'connection:ready', serverVersion: VERSION });
+  wire(ws, 'agent', { type: 'health', nodeVersion: process.version, claudeCodeInstalled: true, claudeAuthenticated: true });
+  wire(ws, 'agent', { type: 'fs:root', root: connRoot, name: basename(connRoot) });
+  wire(ws, 'host', { type: 'host:list', hosts: hostsForUser(conn.userId) });
 
   ws.on('message', (raw) => {
-    try {
-      const msg = JSON.parse(String(raw)) as ClientMessage;
-      void dispatch(msg);
-    } catch (err) {
-      console.error('[ccb-server] ws parse/dispatch error:', err instanceof Error ? err.message : String(err));
+    // NOTE (review B1): control frames are JSON text. Binary WS messages (e.g. a
+    // remote host relaying fallback `frame` bytes) would be String()'d here and
+    // dropped. Moot today — the fallback is disabled and Mode B media is direct
+    // WebRTC — but binary host→client frame relay would need an isBinary branch
+    // that parses the frame header for routing before re-sending.
+    let env: { channel?: unknown; payload?: unknown; hostId?: unknown; browserId?: unknown };
+    try { env = JSON.parse(String(raw)) as typeof env; } catch { return; }
+
+    // Tolerate a legacy raw ClientMessage (no envelope) → server-host agent.
+    if (!env || typeof env.channel !== 'string' || !('payload' in env)) {
+      void dispatch(env as unknown as ClientMessage, conn.userId);
+      return;
+    }
+    const channel = env.channel;
+    const targetHost = typeof env.hostId === 'string' ? env.hostId : conn.selectedHostId;
+
+    // ICE/TURN creds are minted by the backend (it holds TURN_SECRET), whichever
+    // host ultimately answers the offer. Answer get-ice before any routing.
+    if (channel === 'signal' && (env.payload as { type?: string } | undefined)?.type === 'signal:get-ice') {
+      wire(ws, 'signal', { type: 'signal:ready', iceServers: iceServers() }, { browserId: typeof env.browserId === 'string' ? env.browserId : undefined });
+      return;
+    }
+
+    // host channel: registry ops (incl. promoting this socket to a remote host).
+    if (channel === 'host') { handleHostChannel(conn, env.payload as Record<string, unknown> | undefined); return; }
+
+    // If this socket is itself a registered (electron) host, its frames flow
+    // back out to the clients bound to it.
+    const asHost = hostSockets.get(ws);
+    if (asHost && (channel === 'agent' || channel === 'signal' || channel === 'browser' || channel === 'frame')) {
+      relayToClients(asHost, env);
+      return;
+    }
+
+    // Client → a remote host: stamp our clientId (so the host can target replies
+    // back to us) and relay verbatim (Mode B).
+    if (targetHost !== SERVER_HOST_ID) {
+      (env as { clientId?: string }).clientId = conn.clientId;
+      if (!relayToHost(targetHost, env)) wire(ws, 'notify', { type: 'notify', level: 'error', message: 'Selected host is offline.' });
+      return;
+    }
+
+    // Server host (in-process).
+    if (channel === 'agent') { void dispatch(env.payload as ClientMessage, conn.userId); return; }
+    if (channel === 'signal') { handleSignal(conn, env); return; }
+    if (channel === 'browser') { handleBrowserControl(conn, env); return; }
+    // 'frame' / 'notify' are server→client only.
+  });
+
+  ws.on('close', () => {
+    clients.delete(conn);
+    for (const bid of conn.attached) dropMirrorViewer(scopeBrowserId(conn.userId, bid), conn);
+    // If that was the tenant's last connection, schedule their manager for reaping.
+    if (!userHasClients(conn.userId)) scheduleManagerReap(conn.userId);
+    const hid = hostSockets.get(ws);
+    if (hid) {
+      hostSockets.delete(ws);
+      const h = hosts.get(hid);
+      hosts.delete(hid);
+      if (h) {
+        for (const c of clients) if (c.selectedHostId === hid) c.selectedHostId = SERVER_HOST_ID;
+        announceHosts(h.ownerUserId);
+      }
     }
   });
-  ws.on('close', () => { clients.delete(ws); });
-  ws.on('error', () => { clients.delete(ws); });
+  ws.on('error', () => { clients.delete(conn); });
 });
 
 server.listen(PORT, () => {

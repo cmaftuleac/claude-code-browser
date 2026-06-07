@@ -7,13 +7,14 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 const SPINNER_BASE = ['·', '✢', '✳', '✶', '✻', '✽'];
 const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
 const SPINNER_INTERVAL_MS = 120;
-import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
+import type { ClientMessage, ElementAnchor } from '@fineguide-tesseract/shared';
 import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
 import { MY_TAB_ID } from '../tab';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
 import type { SlashCommand } from './SlashCommandMenu';
 import { useSourcePaths } from './SourcesPanel';
+import { RunModePicker, nextPermissionMode } from './RunModePicker';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -38,6 +39,7 @@ export function ChatInput({ send }: Props) {
   const sourcePaths = useSourcePaths();
 
   const pendingAnchors = useChatStore((s) => s.pendingAnchors);
+  const runMode = useChatStore((s) => s.runMode);
   const clearAnchors = useChatStore((s) => s.clearAnchors);
   const addUserMessage = useChatStore((s) => s.addUserMessage);
   const activeView = useChatStore((s) => s.activeView);
@@ -176,6 +178,10 @@ export function ChatInput({ send }: Props) {
         origin: origin || undefined,
         projectDir: sourcePaths[0],
         sources: sourcePaths.length > 0 ? sourcePaths : undefined,
+        // Per-conversation run mode from the picker.
+        permissionMode: runMode.permissionMode,
+        effort: runMode.effort,
+        model: runMode.model,
       });
     };
     if (tid) {
@@ -190,7 +196,7 @@ export function ChatInput({ send }: Props) {
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat]);
+  }, [pendingAnchors, images, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat, runMode]);
 
   const handleStop = useCallback(() => {
     // Send interrupt for active session. Empty string falls back to the host's
@@ -207,6 +213,12 @@ export function ChatInput({ send }: Props) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+    // ⇧+Tab cycles the permission mode (matches Claude Code / the desktop app).
+    if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault();
+      const st = useChatStore.getState();
+      st.setRunMode({ permissionMode: nextPermissionMode(st.runMode.permissionMode) });
     }
   };
 
@@ -323,6 +335,7 @@ export function ChatInput({ send }: Props) {
         </div>
 
         <div className="chat-input__toolbar-right">
+          <RunModePicker />
           {isAgentRunning && (
             <button className="chat-input__stop-btn" onClick={handleStop} title="Stop">
               {'\u25A0'}

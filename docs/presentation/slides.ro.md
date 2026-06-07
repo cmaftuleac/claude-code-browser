@@ -1,4 +1,4 @@
-# Schiță slide-uri — Claude Code Browser (RO)
+# Schiță slide-uri — Fineguide Tesseract (RO)
 
 10 slide-uri (0–9). Text puțin pe slide; restul îl narezi tu. Notele vizuale în _italic_. Slide-urile generate sunt în [`images/generated/`](images/generated/), capturile reale în [`images/`](images/).
 
@@ -7,7 +7,7 @@ Structura: **0** titlu · **1** intro · **2** problemă · **3–4–5** soluț
 ---
 
 ### Slide 0 — Titlu + captură
-**Claude Code Browser** — *Extensie Chrome care leagă pagina din browser de Claude Code*
+**Fineguide Tesseract** — *Extensie Chrome care leagă pagina din browser de Claude Code*
 
 - Numele + un descriptor factual + produsul în acțiune.
 
@@ -19,7 +19,7 @@ _Vizual: `slide-00-title.png` — logo starburst + captura reală a panoului lat
 **Fineguide.AI**
 
 - Platformă de business automatizare cu AI.
-- Claude Code Browser e un proiect de weekend ieșit din munca de zi cu zi.
+- Fineguide Tesseract e un proiect de weekend ieșit din munca de zi cu zi.
 
 _Vizual: `slide-01-intro.png` — text în stânga; logo Fineguide (dreapta-sus) + cod QR către fineguide.ai (dreapta-jos), ambele compozitate real (scanabile)._
 
@@ -100,7 +100,7 @@ _Vizual: `slide-08-metrics.png` — curba de creștere + listarea din store, amb
 **Instalează din Chrome Web Store**
 
 - `npx claude-code-browser install`
-- Scanează codul sau caută „Claude Code Browser".
+- Scanează codul sau caută „Fineguide Tesseract".
 
 _Vizual: `slide-09-end.png` — text în stânga; cod QR (dreapta) către listarea din Chrome Web Store, compozitat real (scanabil)._
 </content>

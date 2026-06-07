@@ -1,49 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { FilePlus2, MessageSquareText, Sparkles, FolderTree, Globe, Plus } from 'lucide-react';
+import { FilePlus2, Plus } from 'lucide-react';
 import { useTasksStore } from '../stores/tasks-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
+import { useBrowserStore } from '../stores/browser-store';
 import { useUiStore } from '../stores/ui-store';
-import { UnifiedTabBar } from './UnifiedTabBar';
-import { TaskDocument } from './TaskDocument';
-import { FileTabBody } from './FileTabBody';
-import { BrowserSurface } from './BrowserSurface';
-import { Composer } from './Composer';
+import type { TabKey } from '../lib/tab-key';
+import { PaneTree } from './PaneTree';
+import { TabDragGhost } from './TabDragGhost';
+import { BrandMark } from './icons/BrandMark';
 import { TREE_DRAG_MIME, extractDroppedPaths } from '../lib/drop-paths';
 
 export function TaskWorkspace() {
   const tasks = useTasksStore((s) => s.tasks);
   const workingFiles = useWorkspaceStore((s) => s.workingFiles);
-  const activeTab = useUiStore((s) => s.activeTab);
-  const setActiveTab = useUiStore((s) => s.setActiveTab);
-  const clearActiveTab = useUiStore((s) => s.clearActiveTab);
+  const browserOrder = useBrowserStore((s) => s.order);
+  const settingsOpen = useUiStore((s) => s.settingsOpen);
+  const layout = useUiStore((s) => s.layout);
   const [dragHint, setDragHint] = useState(false);
 
-  // Keep `activeTab` in sync with what actually exists. Three cases:
-  //   1. activeTab points to a tab that no longer exists → pick first
-  //      available, or clear if nothing left (so Cmd+W can fall through to
-  //      closeProject instead of short-circuiting on a stale tab).
-  //   2. activeTab is null but tabs exist → focus the first.
-  //   3. Otherwise nothing to do.
-  // This effect MUST run before any early-return below so hook order stays
-  // stable across renders.
-  useEffect(() => {
-    const tabExists = (): boolean => {
-      if (!activeTab) return false;
-      if (activeTab.kind === 'conv') return tasks.some((t) => t.id === activeTab.taskId);
-      if (activeTab.kind === 'file') return workingFiles.includes(activeTab.path);
-      if (activeTab.kind === 'browser') return tasks.some((t) => t.id === activeTab.taskId && t.surfaces.browser);
-      return false;
-    };
-    if (activeTab && tabExists()) return;
-    if (tasks.length > 0) setActiveTab({ kind: 'conv', taskId: tasks[0].id });
-    else if (workingFiles.length > 0) setActiveTab({ kind: 'file', path: workingFiles[0] });
-    else if (activeTab != null) clearActiveTab();
-  }, [activeTab, tasks, workingFiles, setActiveTab, clearActiveTab]);
+  // Keep the split layout in sync with the live set of open tabs. This is the
+  // single writer that inserts/removes layout tabs as conversations, files, and
+  // browser instances appear and vanish (from any call site). A layout effect so
+  // a freshly-built layout paints without a one-frame empty flash.
+  useLayoutEffect(() => {
+    const live: TabKey[] = [
+      ...tasks.map((t) => `conv:${t.id}`),
+      ...workingFiles.map((p) => `file:${p}`),
+      ...browserOrder.map((id) => `browser:${id}`),
+      ...(settingsOpen ? ['settings:'] : []),
+    ];
+    useUiStore.getState().reconcile(live);
+  }, [tasks, workingFiles, browserOrder, settingsOpen]);
 
-  // Empty hero: no tabs at all (no tasks AND no files AND no browser).
-  const anyBrowser = tasks.some((t) => t.surfaces.browser);
-  const isEmpty = tasks.length === 0 && workingFiles.length === 0 && !anyBrowser;
+  // Empty hero: no tabs at all (no tasks AND no files AND no browsers AND no settings).
+  const isEmpty = tasks.length === 0 && workingFiles.length === 0 && browserOrder.length === 0 && !settingsOpen;
   if (isEmpty) {
     return <EmptyWorkspace />;
   }
@@ -88,11 +79,11 @@ export function TaskWorkspace() {
     }
   };
 
-  // Every open tab stays mounted (toggled with `hidden`) so Monaco models, chat
-  // scroll, and webview state survive tab switches.
+  // The workspace body is a recursive split tree of editor groups; each group
+  // keeps its own tabs mounted (toggled with `hidden`) so Monaco models, chat
+  // scroll, and webview state survive switches within the group.
   return (
     <section className="task-workspace">
-      <UnifiedTabBar />
       <div
         className="workspace-body"
         onDragEnter={onDragEnter}
@@ -100,37 +91,11 @@ export function TaskWorkspace() {
         onDragLeave={onDragLeave}
         onDrop={(e) => void onDrop(e)}
       >
-        {/* Conv panes — one per task, hidden unless it's the active conv tab. */}
-        {tasks.map((t) => (
-          <div
-            key={`pane-conv:${t.id}`}
-            className="workspace-pane"
-            hidden={!(activeTab?.kind === 'conv' && activeTab.taskId === t.id)}
-          >
-            <TaskDocument taskId={t.id} />
-            <Composer taskId={t.id} />
-          </div>
-        ))}
-        {/* File panes — one per open file. */}
-        {workingFiles.map((path) => (
-          <div
-            key={`pane-file:${path}`}
-            className="workspace-pane"
-            hidden={!(activeTab?.kind === 'file' && activeTab.path === path)}
-          >
-            <FileTabBody path={path} />
-          </div>
-        ))}
-        {/* Browser panes — one per task that has its browser surface open. */}
-        {tasks.filter((t) => t.surfaces.browser).map((t) => (
-          <div
-            key={`pane-browser:${t.id}`}
-            className="workspace-pane"
-            hidden={!(activeTab?.kind === 'browser' && activeTab.taskId === t.id)}
-          >
-            <BrowserSurface />
-          </div>
-        ))}
+        {layout && <PaneTree node={layout} />}
+        {/* Browser overlays are mounted at the App root (not here) so they
+            survive routing to Home / project back-forward without reloading.
+            See App.tsx. */}
+        <TabDragGhost />
 
         <AnimatePresence>
           {dragHint && (
@@ -184,19 +149,22 @@ function EmptyWorkspace() {
           animate={{ scale: 1, opacity: 1 }}
           transition={{ ...ANIM, delay: 0.04 }}
         >
+          <span className="task-empty__warp" aria-hidden>
+            {Array.from({ length: 24 }, (_, i) => {
+              const a = (i * 137.5) % 360;
+              const delay = ((i * 0.13) % 2.6).toFixed(2);
+              const dur = (2.4 + (i % 5) * 0.22).toFixed(2);
+              return (
+                <span
+                  key={i}
+                  className="task-empty__streak"
+                  style={{ '--a': `${a.toFixed(1)}deg`, animationDelay: `${delay}s`, animationDuration: `${dur}s` } as React.CSSProperties}
+                />
+              );
+            })}
+          </span>
           <span className="task-empty__halo" aria-hidden />
-          <span className="task-empty__ring task-empty__ring--chat" aria-hidden>
-            <MessageSquareText size={16} strokeWidth={1.75} />
-          </span>
-          <span className="task-empty__ring task-empty__ring--tree" aria-hidden>
-            <FolderTree size={16} strokeWidth={1.75} />
-          </span>
-          <span className="task-empty__ring task-empty__ring--browser" aria-hidden>
-            <Globe size={16} strokeWidth={1.75} />
-          </span>
-          <span className="task-empty__core">
-            <Sparkles size={32} strokeWidth={1.5} />
-          </span>
+          <BrandMark size={168} shimmer className="task-empty__mark" />
         </motion.div>
 
         <motion.h1

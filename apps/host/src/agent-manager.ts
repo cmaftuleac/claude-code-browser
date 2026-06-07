@@ -5,8 +5,8 @@
  */
 
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { ElementAnchor, ServerMessage } from '@claude-code-browser/shared';
+import type { Query, SDKUserMessage, PermissionMode, McpServerConfig, EffortLevel, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import type { ElementAnchor, ServerMessage, AttachedFile } from '@fineguide-tesseract/shared';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -43,11 +43,22 @@ export interface SendMessageParams {
   clientRequestId?: string;
   anchors?: ElementAnchor[];
   images?: string[];
+  /** Generic (non-image) file attachments; written to /tmp and referenced in the prompt. */
+  files?: AttachedFile[];
   url: string;
   /** Page origin (host:port); used to derive a per-website default project folder. */
   origin?: string;
   projectDir?: string;
   sources?: string[];
+  // Agent config (kept in parity with packages/agent-core). Applied at session
+  // creation. The extension has no Settings UI yet, so these stay unset there —
+  // this is type/option parity so the two orchestrators don't drift.
+  model?: string;
+  permissionMode?: PermissionMode;
+  effort?: EffortLevel;
+  mcpServers?: Record<string, McpServerConfig>;
+  maxTurns?: number;
+  maxBudgetUsd?: number;
 }
 
 /** Best-effort string extraction from any SDK message — used for unknown
@@ -158,6 +169,14 @@ interface LiveSession {
    *  in response to interrupt(), so we use this flag to distinguish a deliberate
    *  stop from a real error. Reset when the resulting message is consumed. */
   interrupted: boolean;
+  /** True while a turn is in flight (message pushed, no `result` yet). */
+  streaming: boolean;
+  /** Last time a turn started or ended — LRU key + idle-reap clock. */
+  lastActivity: number;
+  /** Pending idle-reap timer (cleared on new turn / teardown). */
+  idleTimer?: ReturnType<typeof setTimeout>;
+  /** Set once when reaped so we never double-reap. */
+  reaped: boolean;
 }
 
 function sourcesEqual(a: string[], b: string[]): boolean {
@@ -167,6 +186,11 @@ function sourcesEqual(a: string[], b: string[]): boolean {
   for (let i = 0; i < as.length; i++) if (as[i] !== bs[i]) return false;
   return true;
 }
+
+// ── Memory: idle-session reaping (mirrors packages/agent-core) ────────────────
+const IDLE_REAP_MS = 5 * 60 * 1000;
+const MODERATE_IDLE_MS = 60 * 1000;
+const MAX_LIVE_SESSIONS = 4;
 
 export class AgentManager {
   private ipcServer: NetServer | null = null;
@@ -179,6 +203,10 @@ export class AgentManager {
   private liveSessions = new Map<string, LiveSession>();
   /** Sessions whose canonical sessionId is not yet known (first frame pending) */
   private pendingLiveSessions = new Set<LiveSession>();
+  /** requestId → a parked canUseTool decision (see respondToPermission). Resolves
+   *  when the extension replies with chat:permission, or denies on turn abort.
+   *  Mirrors packages/agent-core. */
+  private pendingPermissions = new Map<string, { resolve: (r: PermissionResult) => void; suggestions?: PermissionUpdate[]; cleanup: () => void }>();
   private browserCliPath: string;
 
   constructor(
@@ -232,6 +260,37 @@ export class AgentManager {
     }
   }
 
+  /** Resolve a parked canUseTool decision (extension replied with chat:permission).
+   *  No-op if unknown (already resolved / aborted). Mirrors packages/agent-core. */
+  respondToPermission(requestId: string, decision: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; persist?: boolean; message?: string }): void {
+    const entry = this.pendingPermissions.get(requestId);
+    if (!entry) return;
+    this.pendingPermissions.delete(requestId);
+    entry.cleanup();
+    if (decision.behavior === 'allow') {
+      entry.resolve({
+        behavior: 'allow',
+        ...(decision.updatedInput ? { updatedInput: decision.updatedInput } : {}),
+        ...(decision.persist && entry.suggestions && entry.suggestions.length > 0 ? { updatedPermissions: entry.suggestions } : {}),
+      });
+    } else {
+      entry.resolve({ behavior: 'deny', message: decision.message || 'Denied by user.' });
+    }
+  }
+
+  /** Live mid-session run-mode switch. permissionMode + model take effect on the
+   *  running Query immediately; effort has no live SDK setter so it is ignored. */
+  async setRunMode(sessionId: string, opts: { permissionMode?: PermissionMode; model?: string }): Promise<void> {
+    const live = this.liveSessions.get(sessionId);
+    if (!live) return;
+    try {
+      if (opts.permissionMode) await live.query.setPermissionMode(opts.permissionMode);
+      if (opts.model !== undefined) await live.query.setModel(opts.model || undefined);
+    } catch (err) {
+      log('setRunMode failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
   setConfig(projectDir?: string): void {
     if (projectDir) this.projectDir = projectDir;
   }
@@ -239,7 +298,7 @@ export class AgentManager {
   private buildSystemPrompt(url?: string): string {
     const cli = `${process.execPath} ${this.browserCliPath}`;
     const pageInfo = url ? `\nThe user's current browser tab is: ${url}` : '';
-    return `You are Claude Code Browser, an AI assistant helping developers inspect and fix web pages.
+    return `You are Fineguide Tesseract, an AI assistant helping developers inspect and fix web pages.
 You have direct access to the user's browser tab via CLI tools. Use the Bash tool to call them:${pageInfo}
 
 BROWSER TOOLS (use via Bash):
@@ -282,6 +341,26 @@ CRITICAL RULES:
       }
     }
 
+    // Save generic file attachments to disk and append their paths to the message.
+    if (params.files && params.files.length > 0) {
+      const fileDir = join(tmpdir(), 'ccb-files');
+      await mkdir(fileDir, { recursive: true });
+      const paths: string[] = [];
+      for (let i = 0; i < params.files.length; i++) {
+        const f = params.files[i];
+        const match = f.dataUrl.match(/^data:[^;]*;base64,(.+)$/);
+        if (!match) continue;
+        const safe = (f.name || `file-${i}`).replace(/[^\w.\-]+/g, '_').slice(-100);
+        // pid + random keep names unique across concurrent host processes.
+        const filePath = join(fileDir, `${process.pid}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${i}-${safe}`);
+        await writeFile(filePath, Buffer.from(match[1], 'base64'));
+        paths.push(filePath);
+      }
+      if (paths.length > 0) {
+        params.message += '\n\nAttached files (use Read tool to view them):\n' + paths.map((p) => `- ${p}`).join('\n');
+      }
+    }
+
     const userText = this.buildPrompt(params);
 
     // Find or create a LiveSession for this conversation.
@@ -289,6 +368,12 @@ CRITICAL RULES:
     if (!live) {
       live = this.createLiveSession(params);
     } else {
+      // Mark busy + disarm the idle reaper BEFORE the await below, so a 5-min
+      // idle timer firing mid-`applyFlagSettings` can't reap this session and
+      // drop the message we're about to push.
+      live.streaming = true;
+      live.lastActivity = Date.now();
+      if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
       // Existing session: if the user changed paths in the UI, push the new
       // additionalDirectories into the running Query before this turn fires.
       const nextSources = params.sources ?? [];
@@ -305,6 +390,11 @@ CRITICAL RULES:
       }
     }
 
+    // A turn is starting: cancel any pending idle reap and mark it busy.
+    live.streaming = true;
+    live.lastActivity = Date.now();
+    if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
+
     const sdkMsg: SDKUserMessage = {
       type: 'user',
       parent_tool_use_id: null,
@@ -314,6 +404,8 @@ CRITICAL RULES:
   }
 
   private createLiveSession(params: SendMessageParams): LiveSession {
+    // Make room before spawning another resident child process.
+    this.enforceSessionCap();
     // The project folder is the session's cwd, which determines its Claude Code
     // session bucket. Resolve to a normalized absolute path so the cwd used here
     // encodes to the same bucket that listSessions({ dir }) reads later. Default to
@@ -331,11 +423,56 @@ CRITICAL RULES:
     const abortController = new AbortController();
     const pump = new AsyncMessagePump<SDKUserMessage>();
 
+    // canUseTool fires mid-turn, after `live` (below) exists; this holder lets the
+    // closure read the (later-resolved) sessionId/clientRequestId. `live` is built
+    // after query() here, so we can't close over it lexically (cf. agent-core).
+    const liveRef: { current: LiveSession | null } = { current: null };
+
     const q = query({
       prompt: pump,
       options: {
         allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
-        permissionMode: 'bypassPermissions',
+        permissionMode: params.permissionMode ?? 'bypassPermissions',
+        // `bypassPermissions` is the default AND a selectable mode (incl. via the
+        // live ⇧+Tab switch); the SDK requires this flag to authorize it. It only
+        // *permits* bypass — the active behavior is still governed by permissionMode.
+        allowDangerouslySkipPermissions: true,
+        ...(params.model ? { model: params.model } : {}),
+        ...(params.effort ? { effort: params.effort } : {}),
+        ...(params.mcpServers && Object.keys(params.mcpServers).length > 0 ? { mcpServers: params.mcpServers } : {}),
+        ...(params.maxTurns && params.maxTurns > 0 ? { maxTurns: params.maxTurns } : {}),
+        ...(params.maxBudgetUsd && params.maxBudgetUsd > 0 ? { maxBudgetUsd: params.maxBudgetUsd } : {}),
+        // Surface every gated tool call to the extension for approval. Only invoked
+        // when the active mode actually gates the tool (never in bypassPermissions).
+        // Parks a Promise resolved by respondToPermission (chat:permission), or
+        // denies on abort so an interrupted turn never leaks a pending decision.
+        canUseTool: (toolName, input, opts) =>
+          new Promise<PermissionResult>((resolve) => {
+            const requestId = crypto.randomUUID();
+            const onAbort = () => {
+              if (this.pendingPermissions.delete(requestId)) {
+                resolve({ behavior: 'deny', message: 'Interrupted.', interrupt: true });
+              }
+            };
+            const cleanup = () => opts.signal.removeEventListener('abort', onAbort);
+            if (opts.signal.aborted) { resolve({ behavior: 'deny', message: 'Interrupted.', interrupt: true }); return; }
+            opts.signal.addEventListener('abort', onAbort, { once: true });
+            this.pendingPermissions.set(requestId, { resolve, suggestions: opts.suggestions, cleanup });
+            const live = liveRef.current;
+            const evt: ServerMessage = {
+              type: 'agent:permission_request',
+              sessionId: live?.sessionId ?? '',
+              requestId,
+              toolName,
+              title: opts.title,
+              displayName: opts.displayName,
+              description: opts.description,
+              input,
+              blockedPath: opts.blockedPath,
+            };
+            if (live && !live.sessionId && live.clientRequestId) this.send({ ...evt, clientRequestId: live.clientRequestId });
+            else this.send(evt);
+          }),
         spawnClaudeCodeProcess: (options) => {
           const cliJs = findClaudeCliJs();
           const child = spawn(process.execPath, [cliJs, ...options.args], {
@@ -345,7 +482,10 @@ CRITICAL RULES:
             // other host process's. Critical for per-panel host isolation: each
             // host listens on its own ephemeral port; without this, browser tools
             // would route to whichever host last wrote the shared port file.
-            env: { ...options.env, CCB_IPC_PORT: String(this.ipcPort) },
+            // ELECTRON_RUN_AS_NODE=1 keeps parity with agent-core: harmless when
+            // the host runs under plain Node (the published-npm case), and correct
+            // if ever spawned under an Electron execPath. See agent-core for detail.
+            env: { ...options.env, CCB_IPC_PORT: String(this.ipcPort), ELECTRON_RUN_AS_NODE: '1' },
             signal: options.signal,
             stdio: ['pipe', 'pipe', 'pipe'],
           });
@@ -370,7 +510,11 @@ CRITICAL RULES:
       cwd,
       sources: params.sources ?? [],
       interrupted: false,
+      streaming: false,
+      lastActivity: Date.now(),
+      reaped: false,
     };
+    liveRef.current = live; // so canUseTool can read the resolved sessionId
 
     if (params.sessionId) this.liveSessions.set(params.sessionId, live);
     else this.pendingLiveSessions.add(live);
@@ -500,6 +644,10 @@ CRITICAL RULES:
               emit({ type: 'chat:error', sessionId: turnSid, error: detail });
               emit({ type: 'agent:status', sessionId: turnSid, status: 'error' });
             }
+            // Turn finished → session is idle; arm the idle-reap timer.
+            live.streaming = false;
+            live.lastActivity = Date.now();
+            this.scheduleIdleReap(live);
             break;
           }
           case 'auth_status': {
@@ -618,6 +766,7 @@ CRITICAL RULES:
         emit({ type: 'agent:status', sessionId: sid, status: 'error' });
       }
     } finally {
+      if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
       if (live.sessionId) this.liveSessions.delete(live.sessionId);
       this.pendingLiveSessions.delete(live);
       try { live.query.close(); } catch { /* ignore */ }
@@ -646,6 +795,65 @@ CRITICAL RULES:
     }
     log('No active session to interrupt for:', sessionId);
     return false;
+  }
+
+  // ── Idle reaping (memory) ───────────────────────────────────────────────────
+
+  private scheduleIdleReap(live: LiveSession): void {
+    if (live.idleTimer) clearTimeout(live.idleTimer);
+    const sid = live.sessionId;
+    if (!sid) return;
+    live.idleTimer = setTimeout(() => this.reapIdleSession(sid), IDLE_REAP_MS);
+  }
+
+  /** Close an idle session's Query (→ child process freed via runConsumer's
+   *  finally), keeping the on-disk session resumable. Map-delete first so a
+   *  racing sendMessage re-creates it with resume. */
+  private reapIdleSession(sessionId: string): void {
+    const live = this.liveSessions.get(sessionId);
+    if (!live || live.streaming || live.reaped) return;
+    log('Reaping idle session:', sessionId);
+    live.reaped = true;
+    if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
+    this.liveSessions.delete(sessionId);
+    live.pump.end();
+  }
+
+  reapIdleSessions(maxIdleMs: number): number {
+    const now = Date.now();
+    let n = 0;
+    for (const live of [...this.liveSessions.values()]) {
+      if (!live.streaming && !live.reaped && now - live.lastActivity >= maxIdleMs) {
+        this.reapIdleSession(live.sessionId);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  reapAllIdle(): number {
+    let n = 0;
+    for (const live of [...this.liveSessions.values()]) {
+      if (!live.streaming && !live.reaped) { this.reapIdleSession(live.sessionId); n++; }
+    }
+    return n;
+  }
+
+  reclaim(level: 'moderate' | 'critical'): void {
+    const n = level === 'critical' ? this.reapAllIdle() : this.reapIdleSessions(MODERATE_IDLE_MS);
+    if (n > 0) log(`Memory reclaim (${level}): reaped ${n} idle session(s)`);
+  }
+
+  private enforceSessionCap(): void {
+    while (this.liveSessions.size >= MAX_LIVE_SESSIONS) {
+      let lru: LiveSession | null = null;
+      for (const s of this.liveSessions.values()) {
+        if (s.streaming || s.reaped) continue;
+        if (!lru || s.lastActivity < lru.lastActivity) lru = s;
+      }
+      if (!lru) break;
+      this.reapIdleSession(lru.sessionId);
+    }
   }
 
   private buildPrompt(params: SendMessageParams): string {

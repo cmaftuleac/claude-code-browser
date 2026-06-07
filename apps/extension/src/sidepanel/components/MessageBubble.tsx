@@ -1,10 +1,45 @@
 import React, { useState } from 'react';
 import { Markdown } from '../lib/markdown';
-import type { ChatMessage } from '../stores/chat-store';
-import type { ElementAnchor } from '@claude-code-browser/shared';
+import { useChatStore, type ChatMessage } from '../stores/chat-store';
+import type { ElementAnchor } from '@fineguide-tesseract/shared';
 
 interface Props {
   message: ChatMessage;
+}
+
+/** Most human-relevant line from a tool's input (command / file path / …). */
+function describePermissionInput(input: Record<string, unknown>): string {
+  for (const key of ['command', 'plan', 'file_path', 'path', 'pattern', 'url']) {
+    const v = input[key];
+    if (typeof v === 'string' && v.trim()) return v;
+  }
+  try { const j = JSON.stringify(input); return j && j !== '{}' ? j : ''; } catch { return ''; }
+}
+
+/** In-chat tool-approval card (agent:permission_request). Interactive until decided. */
+function PermissionBubble({ message }: Props) {
+  const respond = useChatStore((s) => s.respondPermission);
+  const p = message.permission;
+  if (!p) return null;
+  const decided = p.decided;
+  const headline = p.title || `Allow ${p.displayName || p.toolName}?`;
+  const detail = describePermissionInput(p.input);
+  return (
+    <div className={`perm-card ${decided ? 'perm-card--decided' : ''}`}>
+      <div className="perm-card__title">{headline}</div>
+      {p.description && <div className="perm-card__desc">{p.description}</div>}
+      {detail && <pre className="perm-card__detail">{detail}</pre>}
+      {!decided ? (
+        <div className="perm-card__actions">
+          <button className="perm-card__btn perm-card__btn--allow" onClick={() => respond(p.requestId, { behavior: 'allow' })}>Allow</button>
+          <button className="perm-card__btn" onClick={() => respond(p.requestId, { behavior: 'allow', persist: true })}>Allow &amp; don&apos;t ask again</button>
+          <button className="perm-card__btn perm-card__btn--deny" onClick={() => respond(p.requestId, { behavior: 'deny' })}>Deny</button>
+        </div>
+      ) : (
+        <div className="perm-card__resolved">{decided === 'allow' ? 'Allowed' : decided === 'deny' ? 'Denied' : 'No longer needed'}</div>
+      )}
+    </div>
+  );
 }
 
 /** Render content with inline element chips for user messages */
@@ -87,6 +122,10 @@ export function MessageBubble({ message }: Props) {
 
   if (message.kind === 'tool_use') {
     return <ToolUseBubble message={message} />;
+  }
+
+  if (message.kind === 'permission') {
+    return <PermissionBubble message={message} />;
   }
 
   return (

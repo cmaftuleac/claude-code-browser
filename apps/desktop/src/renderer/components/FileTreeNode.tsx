@@ -8,6 +8,7 @@ import { useWorkspaceStore, type DirEntry } from '../stores/workspace-store';
 import { useTasksStore, selectActiveTask } from '../stores/tasks-store';
 import { useFileClipboardStore } from '../stores/file-clipboard-store';
 import { iconFor } from '../lib/file-icon';
+import { parentDir } from '../lib/path-util';
 import { ContextMenu, type CtxItem } from './ContextMenu';
 import { ConfirmCard } from './ConfirmCard';
 import { FileTreeCreateRow } from './FileTreeCreateRow';
@@ -124,11 +125,12 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
       return;
     }
     // Close the old path if it's open — the path no longer exists.
+    // flush:false — the file was renamed on disk; a write would recreate the old name.
     if (useWorkspaceStore.getState().fileBuffers[entry.path]) {
-      useWorkspaceStore.getState().closeFile(entry.path);
+      useWorkspaceStore.getState().closeFile(entry.path, { flush: false });
     }
     // Refresh the parent dir so the tree reflects the new name.
-    const parent = entry.path.slice(0, entry.path.lastIndexOf('/'));
+    const parent = parentDir(entry.path);
     if (parent) void refreshDir(parent);
     setRenaming(false);
   };
@@ -192,7 +194,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
   const pasteHere = async (): Promise<void> => {
     const cb = useFileClipboardStore.getState();
     if (!cb.mode || cb.paths.length === 0) return;
-    const destDir = entry.isDir ? entry.path : (entry.path.slice(0, entry.path.lastIndexOf('/')) || root || '');
+    const destDir = entry.isDir ? entry.path : (parentDir(entry.path) || root || '');
     if (!destDir) return;
     if (cb.mode === 'copy') {
       await window.ccb.fs.copyPaths(cb.paths, destDir);
@@ -200,7 +202,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
       // Move: close any open buffers for the moved sources first.
       const wsBuffers = useWorkspaceStore.getState().fileBuffers;
       for (const src of cb.paths) {
-        if (wsBuffers[src]) useWorkspaceStore.getState().closeFile(src);
+        if (wsBuffers[src]) useWorkspaceStore.getState().closeFile(src, { flush: false });
       }
       await window.ccb.fs.movePaths(cb.paths, destDir);
       cb.clear();
@@ -209,7 +211,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
     // Watcher will also refresh, but for cross-dir moves the source's old
     // parent needs a kick too.
     for (const src of cb.paths) {
-      const parent = src.slice(0, src.lastIndexOf('/'));
+      const parent = parentDir(src);
       if (parent) void refreshDir(parent);
     }
   };
@@ -223,7 +225,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
 
   /** Resolve where a drop on THIS row would land: folder rows accept into
    *  themselves; file rows redirect to their parent directory (Finder rule). */
-  const dropTarget = (): string => entry.isDir ? entry.path : entry.path.slice(0, entry.path.lastIndexOf('/'));
+  const dropTarget = (): string => entry.isDir ? entry.path : parentDir(entry.path);
 
   /** Cmd/Ctrl modifier on drop → copy semantics; otherwise move within
    *  the tree (internal source) or copy from outside the tree (Finder). */
@@ -256,7 +258,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
     } else {
       const wsBuffers = useWorkspaceStore.getState().fileBuffers;
       for (const src of paths) {
-        if (wsBuffers[src]) useWorkspaceStore.getState().closeFile(src);
+        if (wsBuffers[src]) useWorkspaceStore.getState().closeFile(src, { flush: false });
       }
       await window.ccb.fs.movePaths(paths, target);
     }
@@ -265,7 +267,7 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
     if (entry.isDir && !expanded) await toggleDir(entry.path);
     void refreshDir(target);
     for (const src of paths) {
-      const parent = src.slice(0, src.lastIndexOf('/'));
+      const parent = parentDir(src);
       if (parent && parent !== target) void refreshDir(parent);
     }
   };
@@ -277,11 +279,12 @@ export function FileTreeNode({ entry, depth }: { entry: DirEntry; depth: number 
     const wsBuffers = useWorkspaceStore.getState().fileBuffers;
     for (const bufPath of Object.keys(wsBuffers)) {
       if (bufPath === entry.path || (prefix && bufPath.startsWith(prefix))) {
-        useWorkspaceStore.getState().closeFile(bufPath);
+        // flush:false — we're deleting it; a save would recreate it.
+        useWorkspaceStore.getState().closeFile(bufPath, { flush: false });
       }
     }
     await window.ccb.fs.deletePath(entry.path);
-    const parent = entry.path.slice(0, entry.path.lastIndexOf('/'));
+    const parent = parentDir(entry.path);
     if (parent) void refreshDir(parent);
   };
 

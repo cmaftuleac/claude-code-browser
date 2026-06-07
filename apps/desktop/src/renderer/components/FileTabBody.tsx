@@ -11,8 +11,10 @@ import { VideoView } from './VideoView';
 import { PdfView } from './PdfView';
 import { InfoView } from './InfoView';
 import { UnsupportedFileView } from './UnsupportedFileView';
+import { FileMessageView } from './FileMessageView';
 import { useFileViewModesStore } from '../stores/file-view-modes-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
+import { useFileContextMenu } from '../hooks/useFileContextMenu';
 import { fileKind, kindLabel, modesForBuffer, type ViewMode } from '../lib/file-kind';
 
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
@@ -95,6 +97,7 @@ function FileToolbar({ path, isBinary, availableModes }: { path: string; isBinar
  *  + buffer kind, with toolbar above. */
 export function FileTabBody({ path }: { path: string }) {
   const buf = useWorkspaceStore((s) => s.fileBuffers[path]);
+  const error = useWorkspaceStore((s) => s.fileErrors[path]);
   const isBinary = buf?.kind === 'binary';
   const kind = fileKind(path);
   const userMode = useFileViewModesStore((s) => s.get(path, isBinary));
@@ -102,7 +105,45 @@ export function FileTabBody({ path }: { path: string }) {
   // Coerce a stale user mode (e.g. 'source' on a binary buffer) into something this buffer supports.
   const mode: ViewMode = availableModes.includes(userMode) ? userMode : availableModes[0];
 
+  // Baseline right-click menu for every viewer. Rich viewers (Markdown, Image,
+  // Hex, Grid, Video, Audio, PDF) attach their own handler with extra items and
+  // stopPropagation — so this only ever fires for the "passive" panes (Info,
+  // Unsupported, empty/error states). We bail for Monaco / webview so the
+  // source editor keeps its own (richer, non-native) menu.
+  const { open: openMenu, menu } = useFileContextMenu(path);
+  const onContextMenu = (e: React.MouseEvent): void => {
+    const t = e.target as Element | null;
+    if (t?.closest('.monaco-editor') || t?.closest('webview')) return;
+    openMenu(e);
+  };
+
+  // Couldn't open/read the file — show the reason in place of any viewer.
+  // Keep a minimal toolbar (no mode switcher) so "Open With…" / "Reveal" still
+  // give the user a way to recover.
+  if (error) {
+    return (
+      <div className="file-tab-body">
+        <FileToolbar path={path} isBinary={false} availableModes={[]} />
+        <div className="file-tab-body__content" onContextMenu={onContextMenu}>
+          <FileMessageView variant="error" path={path} detail={error} />
+        </div>
+        {menu}
+      </div>
+    );
+  }
+
+  // Empty file — no content to render in a rendered/grid/hex view. Show a
+  // message there, but keep the Info pane working and ALWAYS keep the source
+  // editor editable (an empty text buffer — incl. a brand-new untitled scratch
+  // file — must open an editable Monaco, not a dead "empty" card).
+  // Use the LIVE content length for text (so a once-empty file stops being
+  // "empty" the moment you type, and Hex/Grid refresh); on-disk size for binary.
+  const isEmpty = !!buf && (buf.kind === 'text' ? buf.content.length === 0 : buf.size === 0);
+
   let body: React.ReactNode;
+  if (isEmpty && mode !== 'info' && mode !== 'source') {
+    body = <FileMessageView variant="empty" path={path} />;
+  } else
   switch (mode) {
     case 'grid':
       body = <DataGridView path={path} />;
@@ -130,7 +171,8 @@ export function FileTabBody({ path }: { path: string }) {
   return (
     <div className="file-tab-body">
       <FileToolbar path={path} isBinary={isBinary} availableModes={availableModes} />
-      <div className="file-tab-body__content">{body}</div>
+      <div className="file-tab-body__content" onContextMenu={onContextMenu}>{body}</div>
+      {menu}
     </div>
   );
 }
