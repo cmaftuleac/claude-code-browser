@@ -4,7 +4,12 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle the workspace `shared` package into the main bundle instead of
+    // externalizing it: it's ESM-only ("type":"module", and its exports map has
+    // no `require` condition), so a CJS `require()` from the built main fails
+    // (ERR_PACKAGE_PATH_NOT_EXPORTED). It's pure TS with no native deps, so
+    // bundling is safe. agent-core stays external (dynamically imported as ESM).
+    plugins: [externalizeDepsPlugin({ exclude: ['@fineguide-tesseract/shared'] })],
     build: {
       outDir: 'dist/main',
       rollupOptions: {

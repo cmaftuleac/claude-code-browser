@@ -8,7 +8,7 @@ This is the **image-ready** version of the deck: each slide reduced to a short t
 
 | # | File | On-slide text | Visual concept |
 |---|---|---|---|
-| 00 | `slide-00-title.png` | "Claude Code Browser" / "Point at it. Ask. Fixed." | Big coral starburst logo, side-panel silhouette beside a web page, confident hero layout |
+| 00 | `slide-00-title.png` | "Fineguide Tesseract" / "Point at it. Ask. Fixed." | Big coral starburst logo, side-panel silhouette beside a web page, confident hero layout |
 | 01 | `slide-01-hook.png` | "The button is the wrong color." | A single web UI with one obviously off-color button, spotlight on it, lots of negative space |
 | 02 | `slide-02-problem.png` | "Describing a pixel is hard." | Messy "telephone game": a screenshot with red arrows, a pasted CSS selector, a confused chat thread |
 | 03 | `slide-03-idea.png` | "What if you could just point?" | A cursor clicking an element that morphs into a chat "chip", clean and elegant |

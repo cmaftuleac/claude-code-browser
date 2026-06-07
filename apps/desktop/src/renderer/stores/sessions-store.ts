@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { SessionInfo } from '@claude-code-browser/shared';
+import type { SessionInfo } from '@fineguide-tesseract/shared';
 
 /**
  * On-disk Claude Code sessions available to resume. Populated on demand when

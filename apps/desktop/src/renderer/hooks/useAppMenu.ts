@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useTasksStore } from '../stores/tasks-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
+import { useBrowserStore } from '../stores/browser-store';
 import { useUiStore, closeActiveTab } from '../stores/ui-store';
 import { useNavStore } from '../stores/nav-store';
 import { useRecentsStore } from '../stores/recents-store';
@@ -33,6 +34,11 @@ export function useAppMenu(): void {
       ws.requestCreate(ws.root, 'file');
     });
 
+    sub('newBrowser', () => {
+      const id = useBrowserStore.getState().openBrowser({ focus: true });
+      useUiStore.getState().setActiveTab({ kind: 'browser', id });
+    });
+
     sub('openFolder', () => { void useWorkspaceStore.getState().openFolder(); });
 
     sub('openRecent', (...args) => {
@@ -58,21 +64,35 @@ export function useAppMenu(): void {
     // close the project, else quit.
     sub('closeTab', () => { closeActiveTab(); });
 
+    // Reopen the most-recently-closed tab (browser / file / conversation /
+    // settings), Chrome-style. Cmd/Ctrl+Shift+T.
+    sub('reopenClosedTab', () => { useUiStore.getState().reopenLastClosed(); });
+
     sub('closeProject', () => {
       const ws = useWorkspaceStore.getState();
       if (ws.root) ws.closeProject();
     });
 
+    // Forwarded from a focused browser guest (main's before-input-event) so
+    // Cmd/Ctrl+Z undo-delete works even while a <webview> owns the keyboard.
+    sub('undoDelete', () => { void useWorkspaceStore.getState().undoDelete(); });
+
     // ── View ────────────────────────────────────────────────
     sub('toggleTasksRail', () => { useUiStore.getState().toggleTasksRail(); });
     sub('toggleStateRail', () => { useUiStore.getState().toggleStateRail(); });
+    sub('nextTab', () => { useUiStore.getState().cycleTab(1); });
+    sub('prevTab', () => { useUiStore.getState().cycleTab(-1); });
 
     // ── Go ──────────────────────────────────────────────────
     sub('navBack', () => { useNavStore.getState().back(); });
     sub('navForward', () => { useNavStore.getState().forward(); });
 
+    // ── Settings ────────────────────────────────────────────
+    sub('settings', () => { useUiStore.getState().openSettings(); });
+
     // ── Help ────────────────────────────────────────────────
-    sub('about', () => { useUiStore.getState().openAbout(); });
+    // About folds into the Settings tab's About section (no separate dialog).
+    sub('about', () => { useUiStore.getState().openSettings('about'); });
 
     // ── App ─────────────────────────────────────────────────
     sub('quit', () => { void window.ccb.app.quit(); });

@@ -1,0 +1,43 @@
+# Keep the build context lean and prevent host artifacts from leaking into the
+# Linux images. node_modules/dist excludes are critical: the host's macOS-arm64
+# node_modules (incl. the SDK's native binaries) and stale dist must NOT be
+# copied in — the images build their own from the lockfile + source.
+
+# Dependencies & build output
+node_modules
+**/node_modules
+dist
+**/dist
+apps/desktop/dist-web
+**/*.tsbuildinfo
+
+# Tooling caches
+.turbo
+**/.turbo
+.playwright-mcp
+
+# VCS / OS / logs
+.git
+.gitignore
+**/.DS_Store
+*.log
+
+# Env & local config (keep the example)
+.env
+.env.*
+!.env.example
+
+# Docker definitions don't need to be in the build context
+docker-compose*.yml
+
+# Repo extras not needed by any image build
+samples
+store-assets
+screenshots
+docs
+skills
+*.zip
+
+# Runtime bind-mount data (workspace sandbox + ./data/<service> stores) — never built in
+workspace
+data

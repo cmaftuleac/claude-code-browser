@@ -50,7 +50,7 @@ const SLIDES = [
     // 0 — Title + product screenshot
     file: "slide-00-title.png",
     inputs: ["01-sidepanel-deploy.png"],
-    prompt: `Title slide. Large headline: "Claude Code Browser". Below it a plain descriptive subtitle (Romanian, not a slogan): "Extensie Chrome care leagă pagina din browser de Claude Code". Big coral starburst logo near the headline on the left. On the right, show the provided side-panel screenshot as the hero product shot, in a plain floating card with rounded corners and a soft shadow. ${SCREENSHOT_RULE}`,
+    prompt: `Title slide. Large headline: "Fineguide Tesseract". Below it a plain descriptive subtitle (Romanian, not a slogan): "Extensie Chrome care leagă pagina din browser de Claude Code". Big coral starburst logo near the headline on the left. On the right, show the provided side-panel screenshot as the hero product shot, in a plain floating card with rounded corners and a soft shadow. ${SCREENSHOT_RULE}`,
   },
   {
     // 1 — Intro: Corneliu + Fineguide.AI  (logo + QR composited later, keep right side clear)
@@ -104,7 +104,7 @@ const SLIDES = [
     // 9 — End + QR to the store (QR composited later, keep bottom-right clear)
     file: "slide-09-end.png",
     inputs: [],
-    prompt: `Closing slide. Put ALL text and the logo on the LEFT 60% of the slide; keep the entire RIGHT 40% completely empty dark space (a QR code will be added there later). Left side, stacked: a large coral starburst logo, then headline (Romanian, descriptive, not a slogan) "Instalează din Chrome Web Store", then a terminal-style code pill containing the exact text (keep in English) "npx claude-code-browser install", then a small muted line (Romanian) "Scanează codul sau caută «Claude Code Browser»". Do not let any text cross into the right 40%. Do not draw any QR code yourself.`,
+    prompt: `Closing slide. Put ALL text and the logo on the LEFT 60% of the slide; keep the entire RIGHT 40% completely empty dark space (a QR code will be added there later). Left side, stacked: a large coral starburst logo, then headline (Romanian, descriptive, not a slogan) "Instalează din Chrome Web Store", then a terminal-style code pill containing the exact text (keep in English) "npx claude-code-browser install", then a small muted line (Romanian) "Scanează codul sau caută «Fineguide Tesseract»". Do not let any text cross into the right 40%. Do not draw any QR code yourself.`,
   },
 ];
 

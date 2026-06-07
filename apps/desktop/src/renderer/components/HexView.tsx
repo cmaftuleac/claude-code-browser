@@ -1,5 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Hash } from 'lucide-react';
 import { useWorkspaceStore } from '../stores/workspace-store';
+import { useFileContextMenu, copyText } from '../hooks/useFileContextMenu';
+import type { CtxItem } from './ContextMenu';
 
 const BYTES_PER_ROW = 16;
 const ROW_H = 18;
@@ -53,13 +56,42 @@ type ChunkState = Uint8Array | 'loading' | 'error';
  */
 export function HexView({ path }: { path: string }) {
   const buf = useWorkspaceStore((s) => s.fileBuffers[path]);
-  const isBinary = buf?.kind === 'binary';
-  const size = isBinary ? buf.size : 0;
+  const rev = useWorkspaceStore((s) => s.fileRevs[path] ?? 0);
+  // Hex is a UNIVERSAL view — raw bytes for every open file. For TEXT buffers we
+  // encode the LIVE in-memory content (so unsaved/edited text — incl. untitled
+  // scratch files with no file on disk — show correctly, not a stale disk read).
+  // BINARY buffers stream their bytes from disk on demand via readChunk.
+  const content = buf?.kind === 'text' ? buf.content : null;
+  const textBytes = useMemo(
+    () => (content != null ? new TextEncoder().encode(content) : null),
+    [content],
+  );
+  const size = textBytes ? textBytes.length : (buf?.size ?? 0);
 
   const [chunks, setChunks] = useState<Record<number, ChunkState>>({});
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportH, setViewportH] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const { open, menu } = useFileContextMenu(path);
+
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const extras: CtxItem[] = [];
+    const rowEl = (e.target as Element | null)?.closest('.hex-row') as HTMLElement | null;
+    const off = rowEl?.dataset.offset;
+    if (off != null) {
+      const n = Number(off);
+      const label = `0x${n.toString(16).toUpperCase().padStart(8, '0')}`;
+      extras.push({ kind: 'item', label: `Copy Offset (${label})`, icon: <Hash size={13} strokeWidth={1.75} />, onActivate: () => copyText(label) });
+    }
+    open(e, extras);
+  };
+
+  // Drop the cached byte chunks only when the file actually reloads from disk
+  // (rev bump) — never on initial mount, so the first load is never wiped.
+  const prevRev = useRef(rev);
+  useEffect(() => {
+    if (prevRev.current !== rev) { prevRev.current = rev; setChunks({}); }
+  }, [rev]);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -90,8 +122,9 @@ export function HexView({ path }: { path: string }) {
   const lastChunk = Math.max(0, Math.floor((lastRow * BYTES_PER_ROW) / CHUNK_BYTES));
 
   // Load any chunks intersecting the visible window we don't already have.
+  // Text buffers are served from memory (textBytes), so no disk reads.
   useEffect(() => {
-    if (!isBinary) return;
+    if (!buf || size === 0 || textBytes) return;
     for (let ci = firstChunk; ci <= lastChunk; ci++) {
       if (chunks[ci] !== undefined) continue;
       setChunks((c) => ({ ...c, [ci]: 'loading' }));
@@ -104,9 +137,9 @@ export function HexView({ path }: { path: string }) {
         setChunks((c) => ({ ...c, [ci]: base64ToBytes(res.base64!) }));
       });
     }
-  }, [firstChunk, lastChunk, path, isBinary, chunks]);
+  }, [firstChunk, lastChunk, path, size, chunks]);
 
-  if (!isBinary) return null;
+  if (!buf) return null;
 
   // Render visible rows. In natural mode they sit at row*ROW_H inside the
   // tall inner div. In compressed mode they sit in the sticky overlay at
@@ -116,10 +149,14 @@ export function HexView({ path }: { path: string }) {
     const byteStart = r * BYTES_PER_ROW;
     const ci = Math.floor(byteStart / CHUNK_BYTES);
     const off = byteStart % CHUNK_BYTES;
-    const chunk = chunks[ci];
+    const chunk = textBytes ? null : chunks[ci];
     let view: Uint8Array | null = null;
-    if (chunk instanceof Uint8Array) view = chunk.subarray(off, Math.min(off + BYTES_PER_ROW, chunk.length));
-    const isLoading = chunk === 'loading' || chunk === undefined;
+    if (textBytes) {
+      view = textBytes.subarray(byteStart, Math.min(byteStart + BYTES_PER_ROW, textBytes.length));
+    } else if (chunk instanceof Uint8Array) {
+      view = chunk.subarray(off, Math.min(off + BYTES_PER_ROW, chunk.length));
+    }
+    const isLoading = !textBytes && (chunk === 'loading' || chunk === undefined);
 
     const hexCells: React.ReactNode[] = [];
     const asciiCells: React.ReactNode[] = [];
@@ -145,6 +182,7 @@ export function HexView({ path }: { path: string }) {
         className="hex-row"
         style={{ position: 'absolute', top, height: ROW_H, left: 0, right: 0 }}
         data-loading={isLoading ? '1' : undefined}
+        data-offset={byteStart}
       >
         <span className="hex-row__offset">{hex(byteStart, 10)}</span>
         <span className="hex-row__bytes">{hexCells}</span>
@@ -154,7 +192,7 @@ export function HexView({ path }: { path: string }) {
   }
 
   return (
-    <div className="hex-view">
+    <div className="hex-view" onContextMenu={onContextMenu}>
       <div className="hex-view__head">
         <span>OFFSET</span>
         <span>00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</span>
@@ -184,6 +222,7 @@ export function HexView({ path }: { path: string }) {
       <div className="hex-view__foot">
         {formatBytes(size)} · {totalRows.toLocaleString()} rows{compressed ? ' · scaled scroll' : ''}
       </div>
+      {menu}
     </div>
   );
 }

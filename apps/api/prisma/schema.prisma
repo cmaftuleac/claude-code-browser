@@ -1,0 +1,42 @@
+// Cloud API user store. Kept intentionally small for the "basics" — auth only;
+// "personal space" tables come later.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String?        @map("password_hash") // null for OAuth-only accounts
+  name          String?
+  tokenVersion  Int            @default(0) @map("token_version") // reserved for future revocation
+  createdAt     DateTime       @default(now()) @map("created_at")
+  oauthAccounts OAuthAccount[]
+
+  // Profile + subscription (owned by fineguide.ai in prod; this is the dev reference store).
+  accountType        String  @default("individual") @map("account_type") // 'individual' | 'organization'
+  orgId              String? @map("org_id")
+  orgName            String? @map("org_name")
+  plan               String  @default("free") // 'free' | 'standard' | 'pro'
+  planInterval       String  @default("monthly") @map("plan_interval") // 'monthly' | 'annual'
+  onboardingComplete Boolean @default(false) @map("onboarding_complete")
+
+  @@map("users")
+}
+
+model OAuthAccount {
+  provider       String
+  providerUserId String   @map("provider_user_id")
+  userId         String   @map("user_id")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@id([provider, providerUserId])
+  @@map("oauth_accounts")
+}

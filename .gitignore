@@ -8,3 +8,12 @@ dist/
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
 dist-web/
+
+# Electron packaging output (DMG/ZIP/NSIS/AppImage + latest*.yml manifests)
+apps/desktop/release/
+
+# Runtime bind-mount dirs (Postgres data, recents, project sandbox) — keep the dirs, not the data
+/data/*
+!/data/.gitkeep
+/workspace/*
+!/workspace/.gitkeep

@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Pipette, Ruler, ImageDown } from 'lucide-react';
 import { mediaUrl } from '../lib/media-url';
+import { useWorkspaceStore } from '../stores/workspace-store';
+import { useFileContextMenu, copyText } from '../hooks/useFileContextMenu';
+import type { CtxItem } from './ContextMenu';
+
+function hexOf(r: number, g: number, b: number): string {
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`.toUpperCase();
+}
 
 /**
  * Image viewer with macOS-standard gestures:
@@ -12,7 +20,8 @@ import { mediaUrl } from '../lib/media-url';
  *    color picker readout (works at any zoom level).
  */
 export function ImageView({ path }: { path: string }) {
-  const url = mediaUrl(path);
+  const rev = useWorkspaceStore((s) => s.fileRevs[path] ?? 0);
+  const url = mediaUrl(path, rev);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -70,24 +79,43 @@ export function ImageView({ path }: { path: string }) {
     catch { setReady(false); }
   };
 
-  const sampleAt = useCallback((clientX: number, clientY: number): void => {
+  // Pure read of the pixel under a viewport coordinate — returns null when the
+  // cursor is off the image (or the canvas isn't ready). Used both by the hover
+  // sampler (which mirrors it into state) and by the context menu (which needs
+  // the value synchronously, before state would have updated).
+  const readPixelAt = useCallback((clientX: number, clientY: number): { rgb: { r: number; g: number; b: number; a: number }; xy: { x: number; y: number } } | null => {
     const img = imgRef.current;
     const cvs = canvasRef.current;
-    if (!img || !cvs || !ready) return;
+    if (!img || !cvs || !ready) return null;
     const rect = img.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.width === 0 || rect.height === 0) return null;
     const relX = (clientX - rect.left) / rect.width;
     const relY = (clientY - rect.top) / rect.height;
-    if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return;
+    if (relX < 0 || relX > 1 || relY < 0 || relY > 1) return null;
     const px = Math.min(cvs.width - 1, Math.max(0, Math.floor(relX * cvs.width)));
     const py = Math.min(cvs.height - 1, Math.max(0, Math.floor(relY * cvs.height)));
     try {
       const ctx = cvs.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) return null;
       const d = ctx.getImageData(px, py, 1, 1).data;
-      setHoverRGB({ r: d[0], g: d[1], b: d[2], a: d[3] });
-      setHoverXY({ x: px, y: py });
-    } catch { /* ignore */ }
+      return { rgb: { r: d[0], g: d[1], b: d[2], a: d[3] }, xy: { x: px, y: py } };
+    } catch { return null; }
+  }, [ready]);
+
+  const sampleAt = useCallback((clientX: number, clientY: number): void => {
+    const s = readPixelAt(clientX, clientY);
+    if (s) { setHoverRGB(s.rgb); setHoverXY(s.xy); }
+  }, [readPixelAt]);
+
+  // Copy the decoded image to the clipboard as PNG, straight off the sampling
+  // canvas (already drawn + same-origin, so it's never tainted).
+  const copyImage = useCallback((): void => {
+    const cvs = canvasRef.current;
+    if (!cvs || !ready) return;
+    cvs.toBlob((blob) => {
+      if (!blob) return;
+      void navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).catch(() => { /* clipboard blocked */ });
+    }, 'image/png');
   }, [ready]);
 
   // Wheel handler attached natively so we can preventDefault (React 17+ marks
@@ -165,15 +193,34 @@ export function ImageView({ path }: { path: string }) {
 
   const onDoubleClick = () => { setScale(1); setOffset({ x: 0, y: 0 }); };
 
-  const hex = hoverRGB
-    ? `#${hoverRGB.r.toString(16).padStart(2, '0')}${hoverRGB.g.toString(16).padStart(2, '0')}${hoverRGB.b.toString(16).padStart(2, '0')}`.toUpperCase()
-    : '';
+  const { open, menu } = useFileContextMenu(path);
+  const onContextMenu = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const extras: CtxItem[] = [];
+    const sample = readPixelAt(e.clientX, e.clientY);
+    if (sample) {
+      const { r, g, b } = sample.rgb;
+      const hexStr = hexOf(r, g, b);
+      extras.push(
+        { kind: 'item', label: `Copy Hex (${hexStr})`, icon: <Pipette size={13} strokeWidth={1.75} />, onActivate: () => copyText(hexStr) },
+        { kind: 'item', label: 'Copy RGB', icon: <Pipette size={13} strokeWidth={1.75} />, onActivate: () => copyText(`rgb(${r}, ${g}, ${b})`) },
+      );
+    }
+    if (naturalSize) {
+      extras.push({ kind: 'item', label: `Copy Dimensions (${naturalSize.w} × ${naturalSize.h})`, icon: <Ruler size={13} strokeWidth={1.75} />, onActivate: () => copyText(`${naturalSize.w} × ${naturalSize.h}`) });
+    }
+    if (ready) {
+      extras.push({ kind: 'item', label: 'Copy Image', icon: <ImageDown size={13} strokeWidth={1.75} />, onActivate: copyImage });
+    }
+    open(e, extras);
+  };
+
+  const hex = hoverRGB ? hexOf(hoverRGB.r, hoverRGB.g, hoverRGB.b) : '';
 
   const cursor = scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'crosshair';
   const zoomPct = Math.round(scale * 100);
 
   return (
-    <div className="image-view">
+    <div className="image-view" onContextMenu={onContextMenu}>
       <div
         ref={stageRef}
         className="image-view__stage"
@@ -219,6 +266,7 @@ export function ImageView({ path }: { path: string }) {
           </div>
         )}
       </div>
+      {menu}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { ElementAnchor, SessionInfo } from '@claude-code-browser/shared';
+import type { ElementAnchor, SessionInfo, ClientMessage, PermissionModeSetting, EffortSetting } from '@fineguide-tesseract/shared';
 
 export function bumpStat(field: 'messageCount' | 'sessionCount') {
   chrome.storage.local.get('ccb-stats', (res) => {
@@ -17,7 +17,27 @@ export interface ChatMessage {
   anchors?: ElementAnchor[];
   images?: string[];
   isStreaming?: boolean;
-  kind?: 'text' | 'thinking' | 'tool_use';
+  kind?: 'text' | 'thinking' | 'tool_use' | 'permission';
+  /** Set when kind==='permission' — a gated tool awaiting the user's approval. */
+  permission?: {
+    requestId: string;
+    toolName: string;
+    title?: string;
+    displayName?: string;
+    description?: string;
+    input: Record<string, unknown>;
+    blockedPath?: string;
+    decided?: 'allow' | 'deny' | 'expired';
+  };
+}
+
+/** Per-conversation run mode. The side panel keeps one current selection (the
+ *  picker) applied to the active conversation; sent on chat:send and switched
+ *  live via agent:set_mode. */
+export interface RunMode {
+  permissionMode: PermissionModeSetting;
+  effort: EffortSetting;
+  model: string;
 }
 
 export interface SessionState {
@@ -56,8 +76,24 @@ interface ChatState {
   /** Pending anchors live globally because they describe the current draft message,
    *  not the session — switching sessions mid-pick would be surprising. */
   pendingAnchors: ElementAnchor[];
+  /** Current run mode (the Composer picker). Default bypassPermissions preserves
+   *  the extension's prior always-run behavior. */
+  runMode: RunMode;
+  /** The native-port sender, registered by useNativePort so store actions
+   *  (respondPermission / live setRunMode) can talk to the host. */
+  _send?: (msg: ClientMessage) => void;
 
   setSessions: (sessions: SessionInfo[]) => void;
+  setSend: (fn: (msg: ClientMessage) => void) => void;
+  /** Update the run mode. permissionMode + model switch a live session immediately
+   *  (agent:set_mode); effort applies from the next chat:send. */
+  setRunMode: (patch: Partial<RunMode>) => void;
+  /** Append a pending tool-permission request to a bucket (agent:permission_request). */
+  addPermissionRequest: (sessionKey: string, perm: NonNullable<ChatMessage['permission']>) => void;
+  /** Reply to a permission request (the approval card) and mark it decided. */
+  respondPermission: (requestId: string, decision: { behavior: 'allow' | 'deny'; persist?: boolean }) => void;
+  /** Mark any still-undecided permission cards in a bucket as expired (turn ended). */
+  expirePermissions: (sessionKey: string) => void;
 
   /** Start a fresh pending chat. Returns the minted clientRequestId so the caller
    *  can attach it to the chat:send payload. */
@@ -137,8 +173,63 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingNewChats: {},
   activeView: { kind: 'empty' },
   pendingAnchors: [],
+  runMode: { permissionMode: 'bypassPermissions', effort: '', model: '' },
 
   setSessions: (sessions) => set({ sessions }),
+
+  setSend: (fn) => set({ _send: fn }),
+
+  setRunMode: (patch) => {
+    const { runMode, activeView, _send } = get();
+    set({ runMode: { ...runMode, ...patch } });
+    // Switch a live (session-resolved) conversation immediately. permissionMode +
+    // model take effect on the running Query; effort only rides the next chat:send.
+    if (activeView.kind === 'session' && _send && (patch.permissionMode !== undefined || patch.model !== undefined)) {
+      _send({
+        type: 'agent:set_mode',
+        sessionId: activeView.sessionId,
+        ...(patch.permissionMode !== undefined ? { permissionMode: patch.permissionMode } : {}),
+        ...(patch.model !== undefined ? { model: patch.model } : {}),
+      });
+    }
+  },
+
+  addPermissionRequest: (sessionKey, perm) =>
+    set((state) => withBucket(state, sessionKey, (s) => ({
+      ...s,
+      messages: [
+        ...s.messages,
+        { id: `perm-${perm.requestId}`, role: 'assistant', content: '', timestamp: Date.now(), kind: 'permission', permission: perm },
+      ],
+    }))),
+
+  respondPermission: (requestId, decision) => {
+    get()._send?.({ type: 'chat:permission', requestId, behavior: decision.behavior, persist: decision.persist });
+    // Mark the matching card decided across every bucket (requestId is unique).
+    const mark = (states: Record<string, SessionState>): Record<string, SessionState> => {
+      const out: Record<string, SessionState> = {};
+      for (const [k, v] of Object.entries(states)) {
+        out[k] = {
+          ...v,
+          messages: v.messages.map((m) =>
+            m.kind === 'permission' && m.permission?.requestId === requestId && !m.permission.decided
+              ? { ...m, permission: { ...m.permission, decided: decision.behavior } }
+              : m),
+        };
+      }
+      return out;
+    };
+    set((state) => ({ sessionStates: mark(state.sessionStates), pendingNewChats: mark(state.pendingNewChats) }));
+  },
+
+  expirePermissions: (sessionKey) =>
+    set((state) => withBucket(state, sessionKey, (s) => ({
+      ...s,
+      messages: s.messages.map((m) =>
+        m.kind === 'permission' && m.permission && !m.permission.decided
+          ? { ...m, permission: { ...m.permission, decided: 'expired' as const } }
+          : m),
+    }))),
 
   newChat: () => {
     const clientRequestId = uuid();

@@ -1,0 +1,155 @@
+# Production stack: nginx gateway (public) → frontend SPA + backend (agent/file)
+# + api (cloud/auth) + db. Only the gateway publishes a port; everything else is
+# reachable only on the internal `ccb` network by service name (see docker/nginx/gateway.conf).
+# All persistent data is directory-bind-mounted under ./data/<service> for easy copy/backup.
+#
+#   mkdir -p data/postgres data/ccb_home workspace
+#   cp .env.example .env            # set CCB_JWT_SECRET (required); GOOGLE_* optional
+#   docker compose up -d --build && open http://localhost:${GATEWAY_PORT:-8080}
+#
+# Hot-reload dev: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-ccb}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-ccb}"
+      POSTGRES_DB: "${POSTGRES_DB:-ccb}"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks: [ccb]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ccb} -d ${POSTGRES_DB:-ccb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    environment:
+      CCB_API_PORT: "9320"
+      DATABASE_URL: "${DATABASE_URL:-postgres://ccb:ccb@db:5432/ccb}"
+      CCB_JWT_SECRET: "${CCB_JWT_SECRET:-}" # MUST match the backend's secret
+      CCB_JWT_TTL: "${CCB_JWT_TTL:-7d}"
+      CCB_PUBLIC_URL: "${CCB_PUBLIC_URL:-http://localhost:8080}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [ccb]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9320/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 25s
+
+  # Headless Chromium the agent + human mirror drive (Mode A). CDP-only, internal.
+  browser:
+    build:
+      context: .
+      dockerfile: docker/browser.Dockerfile
+    networks: [ccb]
+    restart: unless-stopped
+    # Chromium needs a larger /dev/shm than the 64MB default or tabs crash.
+    shm_size: "1gb"
+    healthcheck:
+      test: ["CMD-SHELL", "</dev/null cat </proc/1/cmdline >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    environment:
+      CCB_PORT: "9315"
+      CCB_ROOT: "${CCB_ROOT:-/workspace}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}" # optional; only live chat needs it
+      CCB_REQUIRE_AUTH: "${CCB_REQUIRE_AUTH:-false}" # true → gate /fs + /ws + /recents
+      CCB_JWT_SECRET: "${CCB_JWT_SECRET:-}"          # MUST match the api's secret (verify-only)
+      CCB_BROWSER_CDP_URL: "${CCB_BROWSER_CDP_URL:-http://browser:9222}" # headless Chromium CDP
+      # WebRTC ICE — the backend mints short-lived coturn creds (signaling only;
+      # media is peer-to-peer and never transits the backend).
+      STUN_URL: "${STUN_URL:-stun:stun.l.google.com:19302}"
+      TURN_HOST: "${TURN_HOST:-}"     # e.g. turn:turn.example.com:3478 (blank → STUN-only)
+      TURN_SECRET: "${TURN_SECRET:-}" # coturn static-auth-secret (shared with the coturn service)
+      # Drop an idle tenant's agent manager this many ms after their last
+      # connection closes (default 30 min); frees lingering empty managers.
+      CCB_MANAGER_REAP_MS: "${CCB_MANAGER_REAP_MS:-1800000}"
+    volumes:
+      - ./workspace:/workspace      # the dir the agent reads/edits (CCB_ROOT)
+      - ./data/ccb_home:/home/ccb   # persists ~/.ccb/recents.json
+    networks: [ccb]
+    restart: unless-stopped
+    depends_on:
+      browser:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9315/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    networks: [ccb]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"] # busybox wget in nginx:alpine
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/gateway.Dockerfile
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080" # change to "80:8080" to serve on privileged port 80
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks: [ccb]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # TURN/STUN for WebRTC NAT traversal. Media relays through coturn ONLY when
+  # direct P2P fails (restrictive NATs) — it never transits the backend. Uses
+  # host networking because TURN must advertise real, reachable host ports;
+  # bridge NAT would break the relay. Linux-only (host networking); on a cloud
+  # VM that's exactly right. Set TURN_SECRET + TURN_HOST in .env to enable.
+  coturn:
+    image: coturn/coturn:4.6-alpine
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      -n --no-cli --no-tls --no-dtls
+      --use-auth-secret --static-auth-secret=${TURN_SECRET:-changeme}
+      --realm=${TURN_REALM:-ccb}
+      --listening-port=3478
+      --min-port=49160 --max-port=49200
+      --fingerprint
+
+networks:
+  ccb:

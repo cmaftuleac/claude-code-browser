@@ -1,4 +1,4 @@
-# Scenariu prezentare — Claude Code Browser (RO)
+# Scenariu prezentare — Fineguide Tesseract (RO)
 
 ~12–13 minute vorbit. Marcajele `[S#]` corespund slide-urilor din [`slides.ro.md`](slides.ro.md). `(pauză)` = pauză scurtă. Textul *italic* din paranteze drepte = indicații de scenă, nu se spune.
 
@@ -24,7 +24,7 @@ Ritm țintă ~130 de cuvinte/minut. Nu grăbi demo-ul; dacă trebuie să tai, ta
 
 **[S0 — titlu + captură]**
 
-Bună tuturor. Astăzi vă arăt **Claude Code Browser** — o extensie de Chrome la care am lucrat un weekend și care, cumva, a ajuns pe Chrome Web Store. (pauză) Pe scurt: selectezi un element în pagină, iar Claude Code îi modifică direct codul.
+Bună tuturor. Astăzi vă arăt **Fineguide Tesseract** — o extensie de Chrome la care am lucrat un weekend și care, cumva, a ajuns pe Chrome Web Store. (pauză) Pe scurt: selectezi un element în pagină, iar Claude Code îi modifică direct codul.
 
 ---
 

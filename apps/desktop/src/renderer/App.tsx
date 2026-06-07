@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useMonaco } from '@monaco-editor/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Circle, Folder, Loader2 } from 'lucide-react';
 import { useAgentIpc } from './ipc/useAgentIpc';
@@ -10,13 +11,22 @@ import { TasksRail } from './components/TasksRail';
 import { TaskWorkspace } from './components/TaskWorkspace';
 import { StateRail } from './components/StateRail';
 import { HomeScreen } from './components/HomeScreen';
-import { AboutDialog } from './components/AboutDialog';
+import { BrowserOverlay } from './components/BrowserOverlay';
+import { HostPicker } from './components/HostPicker';
+import { UpdatePill } from './components/UpdatePill';
+import { initUpdateListener } from './stores/update-store';
+import { useHostStore } from './stores/host-store';
 import { useTasksStore } from './stores/tasks-store';
 import { useWorkspaceStore } from './stores/workspace-store';
+import { useBrowserStore } from './stores/browser-store';
 import { useFileClipboardStore } from './stores/file-clipboard-store';
 import { useRecentsStore } from './stores/recents-store';
 import { useConnectionStore } from './stores/connection-store';
+import { useSettingsStore } from './stores/settings-store';
 import { useUiStore, closeActiveTab } from './stores/ui-store';
+import { parentDir } from './lib/path-util';
+import { installMemoryReclaim } from './lib/memory-reclaim';
+import { restoreWorkspaceOnStartup, installWorkspaceManager } from './lib/workspace-snapshot';
 
 const ANIM = { duration: 0.18, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -38,8 +48,10 @@ export function App() {
   const tasksRailOpen = useUiStore((s) => s.tasksRailOpen);
   const stateRailOpen = useUiStore((s) => s.stateRailOpen);
   const view = useUiStore((s) => s.view);
-  const aboutOpen = useUiStore((s) => s.aboutOpen);
-  const closeAbout = useUiStore((s) => s.closeAbout);
+  // Browser overlays live at the App root (portaled to <body>) so they persist
+  // across routing to Home / project back-forward — TaskWorkspace unmounts in
+  // those views, which would otherwise destroy every <webview> and reload it.
+  const browserOrder = useBrowserStore((s) => s.order);
 
   // ── Global shortcuts: Cmd+W (tiered close) and Cmd+Q (hold to quit). ──
   const [holdActive, setHoldActive] = useState(false);
@@ -62,11 +74,8 @@ export function App() {
     const offW = window.ccb.app.onCmdW(() => closeActiveTab());
 
     const offQDown = window.ccb.app.onCmdQDown(() => {
-      const hasProject = useWorkspaceStore.getState().root != null;
-      if (!hasProject) {
-        void window.ccb.app.quit();
-        return;
-      }
+      // Always require the hold (Chrome-style), whether or not a project is
+      // open — Cmd+Q should never quit on a single tap.
       // Idempotent: ignore key auto-repeat if already counting down.
       if (holdRafRef.current != null) return;
       holdStartRef.current = performance.now();
@@ -80,7 +89,8 @@ export function App() {
           holdRafRef.current = requestAnimationFrame(tick);
         } else {
           holdRafRef.current = null;
-          void window.ccb.app.quit();
+          // Flush unsaved edits before quitting (PyCharm saves on quit).
+          void useWorkspaceStore.getState().saveAll().finally(() => window.ccb.app.quit());
         }
       };
       holdRafRef.current = requestAnimationFrame(tick);
@@ -114,6 +124,15 @@ export function App() {
       const isMac = navigator.platform.toLowerCase().includes('mac');
       const primary = isMac ? e.metaKey : e.ctrlKey;
       if (e.shiftKey || e.altKey) return;
+
+      // Cmd/Ctrl+Z outside a text editor → undo the last file deletion. (Monaco
+      // owns Z when the editor is focused — caught by isTypingTarget above.)
+      if (primary && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        void useWorkspaceStore.getState().undoDelete();
+        return;
+      }
+
       const target = useWorkspaceStore.getState().activeFile;
       if (!target) return;
 
@@ -122,10 +141,12 @@ export function App() {
       // matches Finder + VS Code behavior. Cmd/Ctrl+Backspace still works.
       if (e.key === 'Delete' || (primary && e.key === 'Backspace')) {
         e.preventDefault();
-        useWorkspaceStore.getState().closeFile(target);
-        void window.ccb.fs.deletePath(target);
-        const p = target.slice(0, target.lastIndexOf('/'));
-        if (p) void useWorkspaceStore.getState().refreshDir(p);
+        // flush:false — we're trashing it; a save would recreate it post-delete.
+        useWorkspaceStore.getState().closeFile(target, { flush: false });
+        const p = parentDir(target);
+        // Await the delete (staging move) before refreshing so the tree doesn't
+        // briefly re-show the just-deleted file (matches FileTreeNode's flow).
+        void window.ccb.fs.deletePath(target).then(() => { if (p) void useWorkspaceStore.getState().refreshDir(p); });
         return;
       }
 
@@ -138,7 +159,7 @@ export function App() {
       else if (k === 'v') {
         e.preventDefault();
         if (!cb.mode || cb.paths.length === 0) return;
-        const parent = target.slice(0, target.lastIndexOf('/'));
+        const parent = parentDir(target);
         const wsRoot = useWorkspaceStore.getState().root;
         const destDir = parent || wsRoot;
         if (!destDir) return;
@@ -147,14 +168,16 @@ export function App() {
             await window.ccb.fs.copyPaths(cb.paths, destDir);
           } else {
             for (const src of cb.paths) {
-              useWorkspaceStore.getState().closeFile(src);
+              // flush:false — the file is moving; writing the old path would
+              // race the move and leave a stray copy behind.
+              useWorkspaceStore.getState().closeFile(src, { flush: false });
             }
             await window.ccb.fs.movePaths(cb.paths, destDir);
             cb.clear();
           }
           void useWorkspaceStore.getState().refreshDir(destDir);
           for (const src of cb.paths) {
-            const p = src.slice(0, src.lastIndexOf('/'));
+            const p = parentDir(src);
             if (p && p !== destDir) void useWorkspaceStore.getState().refreshDir(p);
           }
         })();
@@ -168,23 +191,118 @@ export function App() {
   // submenu have data without waiting for a project open.
   useEffect(() => { void useRecentsStore.getState().load(); }, []);
 
+  // Subscribe to the account's host registry (cloud server + the user's online
+  // machines). Web shows a picker when there's more than one; desktop has one.
+  useEffect(() => { useHostStore.getState().init(); }, []);
+
+  // Hydrate user settings + apply the persisted theme/accent/density to <html>.
+  useEffect(() => { void useSettingsStore.getState().init(); }, []);
+
+  // Tab/layout persistence + restore. The manager (installed first) watches for
+  // a project opening into an empty workspace and rebuilds its saved tabs — so a
+  // Cmd+R reload, an app restart (reopen-last-project), or reopening a project
+  // from Home all come back to the exact layout. restoreWorkspaceOnStartup then
+  // decides whether to auto-open a project on launch (which triggers the manager).
+  useEffect(() => {
+    const cleanup = installWorkspaceManager();
+    void restoreWorkspaceOnStartup();
+    return cleanup;
+  }, []);
+
+  // Memory: idle-tab sweep + OS memory-pressure handler (suspends hidden tabs,
+  // GC). Sessions/caches are reclaimed in the main process.
+  useEffect(() => installMemoryReclaim(), []);
+
+  // Listen for silent auto-update progress (packaged desktop only; web no-op).
+  useEffect(() => initUpdateListener(), []);
+
+  // Mirror the focused browser instance to main so the agent's browser tools
+  // target the browser the user is looking at (interim, until per-session routing).
+  useEffect(() => {
+    let prev = useBrowserStore.getState().activeId;
+    window.ccb.setActiveBrowser(prev);
+    return useBrowserStore.subscribe((s) => {
+      if (s.activeId !== prev) { prev = s.activeId; window.ccb.setActiveBrowser(s.activeId); }
+    });
+  }, []);
+
+  // The agent navigated with no usable guest → navigate the chat's bound (blank)
+  // browser if it exists, else create a fresh one. Report the actual instance id
+  // back so main re-keys the parked request to it (handles a stale/undefined id).
+  useEffect(() => {
+    return window.ccb.onEnsureBrowser(({ url, browserId, requestId }) => {
+      const bs = useBrowserStore.getState();
+      let id: string;
+      if (browserId && bs.instances[browserId]) {
+        bs.navigate(browserId, url);
+        bs.setActive(browserId);
+        id = browserId;
+      } else {
+        id = bs.openBrowser({ url, focus: true });
+      }
+      useUiStore.getState().setActiveTab({ kind: 'browser', id });
+      window.ccb.browserEnsured(requestId, id);
+    });
+  }, []);
+
   // Live-reflect on-disk changes into the (project-wide) open file buffers.
+  // Disk always wins; reloadFromDisk handles every file kind (text adopts the
+  // new content undo-ably, media/binary bump a revision so viewers re-fetch).
   useEffect(() => {
     return window.ccb.fs.onFsChange((paths) => {
       const ws = useWorkspaceStore.getState();
       const dirs = new Set<string>();
       for (const p of paths) {
-        const slash = p.lastIndexOf('/');
-        if (slash > 0) dirs.add(p.slice(0, slash));
-        if (ws.fileBuffers[p]) {
-          void window.ccb.fs.readFile(p).then((res) => {
-            if (res.content != null) useWorkspaceStore.getState().applyDiskChange(p, res.content);
-          });
-        }
+        const parent = parentDir(p);
+        if (parent) dirs.add(parent);
+        if (ws.fileBuffers[p]) void ws.reloadFromDisk(p);
       }
       for (const d of dirs) void ws.refreshDir(d);
     });
   }, []);
+
+  // PyCharm-style auto-save on frame deactivation: when the app/window loses
+  // OS focus or is hidden (switching to another app), flush all dirty files.
+  useEffect(() => {
+    const flush = (): void => {
+      // window 'blur' also fires when focus moves into a child <webview>/DevTools
+      // (still within the app). Only flush on true app deactivation, never on a
+      // focus hop to a guest — otherwise we'd churn writes mid-edit.
+      if (document.hasFocus()) return;
+      void useWorkspaceStore.getState().saveAll();
+    };
+    const onVisible = (): void => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('blur', flush);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('blur', flush);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
+
+  // Monaco model lifetime is owned here, not by FileEditor's unmount. FileEditor
+  // sets keepCurrentModel, so a file's model (and undo stack) survives the editor
+  // unmounting — which happens on tab switches, when a tab MOVES between panes,
+  // and during the brief double-mount window while a split collapses. We instead
+  // dispose a model only when its file truly leaves `workingFiles` (real close),
+  // and dispose everything when the project switches/closes. This is what keeps a
+  // collapse from blanking the surviving editor while still letting a reopened
+  // file rebuild cleanly (no stale model to collide with the re-read buffer).
+  const monaco = useMonaco();
+  const projectRoot = useWorkspaceStore((s) => s.root);
+  const workingFiles = useWorkspaceStore((s) => s.workingFiles);
+  useEffect(() => {
+    if (!monaco) return;
+    const live = new Set(workingFiles.map((p) => monaco.Uri.parse(p).toString()));
+    for (const m of monaco.editor.getModels()) {
+      if (!live.has(m.uri.toString())) m.dispose();
+    }
+  }, [monaco, workingFiles]);
+  useEffect(() => {
+    if (!monaco) return;
+    // Dispose everything when the project is closed/switched (or App unmounts).
+    return () => { for (const m of monaco.editor.getModels()) m.dispose(); };
+  }, [monaco, projectRoot]);
 
   return (
     <div className="ide">
@@ -212,6 +330,10 @@ export function App() {
             </AnimatePresence>
         </div>
       )}
+      {/* One overlay per browser instance — keyed by stable uuid (never index) so
+          closing a middle instance can't reparent a sibling's webview. Mounted
+          here (App root, portaled to <body>) so they outlive view switches. */}
+      {browserOrder.map((id) => <BrowserOverlay key={id} browserId={id} />)}
       <AnimatePresence>
         {holdActive && (
           <motion.div
@@ -239,9 +361,6 @@ export function App() {
           </motion.div>
         )}
       </AnimatePresence>
-      <AnimatePresence>
-        {aboutOpen && <AboutDialog key="about" onClose={closeAbout} />}
-      </AnimatePresence>
       <div className="ide__footer">
         <span className={`ide__footer-item ide__footer-conn--${status}`}>
           <Circle size={9} fill="currentColor" strokeWidth={0} />
@@ -253,6 +372,7 @@ export function App() {
             {projectName}
           </span>
         )}
+        <HostPicker />
         <span className="ide__footer-spacer" />
         <AnimatePresence>
           {anyRunning && (
@@ -270,6 +390,7 @@ export function App() {
           )}
         </AnimatePresence>
       </div>
+      <UpdatePill />
       {globalCtxMenu}
     </div>
   );

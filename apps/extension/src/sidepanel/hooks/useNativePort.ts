@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
+import type { ClientMessage, ServerMessage } from '@fineguide-tesseract/shared';
 import { useConnectionStore } from '../stores/connection-store';
 import { useChatStore, bumpStat, type ChatMessage } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
@@ -256,10 +256,26 @@ export function useNativePort() {
           break;
         }
 
+        case 'agent:permission_request': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.addPermissionRequest(key, {
+            requestId: msg.requestId,
+            toolName: msg.toolName,
+            title: msg.title,
+            displayName: msg.displayName,
+            description: msg.description,
+            input: msg.input,
+            blockedPath: msg.blockedPath,
+          });
+          break;
+        }
+
         case 'chat:complete': {
           const key = routeKey(msg);
           if (!key) break;
           store.completeMessage(key, msg.messageId, msg.result);
+          store.expirePermissions(key);
           store.setSessionRunning(key, false);
           // Refresh session list (title may have been generated)
           requestSessionList();
@@ -269,6 +285,7 @@ export function useNativePort() {
         case 'chat:error': {
           const key = routeKey(msg);
           if (!key) break;
+          store.expirePermissions(key);
           const isInterrupt = msg.error.includes('interrupted') || msg.error.includes('Interrupted');
           const sysMsg: ChatMessage = isInterrupt
             ? { id: `int-${Date.now()}`, role: 'system', content: '_interrupted_', timestamp: Date.now() }
@@ -335,11 +352,14 @@ export function useNativePort() {
   }, [setStatus, send]);
 
   useEffect(() => {
+    // Register the sender so store actions (respondPermission / live setRunMode)
+    // can reach the host without prop-threading `send` through the tree.
+    useChatStore.getState().setSend(send);
     connect();
     return () => {
       portRef.current?.disconnect();
     };
-  }, [connect]);
+  }, [connect, send]);
 
   // Track THIS panel's own tab (from the URL), and refresh its url on navigation.
   // Replaces the SW's old global _target_tab push — each panel watches only its tab.

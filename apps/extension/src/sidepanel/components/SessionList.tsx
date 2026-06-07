@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import type { ClientMessage } from '@claude-code-browser/shared';
+import type { ClientMessage } from '@fineguide-tesseract/shared';
 import { useChatStore, buildSessionEntries } from '../stores/chat-store';
 import { useConnectionStore } from '../stores/connection-store';
 import { MY_TAB_ID } from '../tab';

@@ -13,12 +13,11 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import { useUiStore, type AppView } from './ui-store';
-import { useTasksStore, selectActiveTask, type Surface } from './tasks-store';
+import { useTasksStore } from './tasks-store';
 
 export interface Location {
   view: AppView;
   taskId?: string;
-  surface?: Surface;
 }
 
 const CAP = 64;
@@ -42,7 +41,7 @@ interface NavState {
 
 function sameLoc(a: Location | undefined, b: Location): boolean {
   if (!a) return false;
-  return a.view === b.view && a.taskId === b.taskId && a.surface === b.surface;
+  return a.view === b.view && a.taskId === b.taskId;
 }
 
 function apply(loc: Location): void {
@@ -55,7 +54,9 @@ function apply(loc: Location): void {
       const target = tasks.find((t) => t.id === loc.taskId) ?? tasks[0];
       if (target) {
         useTasksStore.getState().selectTask(target.id);
-        if (loc.surface) useTasksStore.getState().setActiveSurface(target.id, loc.surface);
+        // Move the workspace pane focus to the target conversation too, so the
+        // highlighted pane agrees with the StateRail/Titlebar after back/forward.
+        useUiStore.getState().setActiveTab({ kind: 'conv', taskId: target.id });
       }
     }
   } finally {
@@ -105,12 +106,10 @@ export const useNavStore = create<NavState>((set, get) => ({
 export function useNavWatcher(): void {
   const view = useUiStore((s) => s.view);
   const activeId = useTasksStore((s) => s.activeId);
-  const surface = useTasksStore((s) => selectActiveTask(s)?.activeSurface);
   useEffect(() => {
     useNavStore.getState().pushIfChanged({
       view,
       taskId: activeId ?? undefined,
-      surface,
     });
-  }, [view, activeId, surface]);
+  }, [view, activeId]);
 }

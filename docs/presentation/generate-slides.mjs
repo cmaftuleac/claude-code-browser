@@ -38,7 +38,7 @@ const STYLE = [
 const SLIDES = [
   {
     file: "slide-00-title.png",
-    prompt: `Title slide. Headline text: "Claude Code Browser". Subtitle text: "Point at it. Ask. Fixed.". A large coral-orange starburst logo, and a stylized browser side-panel silhouette next to a web page. Confident hero layout.`,
+    prompt: `Title slide. Headline text: "Fineguide Tesseract". Subtitle text: "Point at it. Ask. Fixed.". A large coral-orange starburst logo, and a stylized browser side-panel silhouette next to a web page. Confident hero layout.`,
   },
   {
     file: "slide-01-hook.png",

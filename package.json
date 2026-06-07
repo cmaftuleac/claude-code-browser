@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-browser",
+  "name": "fineguide-tesseract",
   "private": true,
   "license": "MIT",
   "author": {
@@ -30,11 +30,14 @@
     "build:web": "npm run build -w packages/shared -w packages/agent-core && npm run build:web -w apps/desktop && npm run build -w apps/server",
     "start:web": "npm run build:web && node apps/server/dist/index.js",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
-    "uninstall-host": "node apps/host/dist/install.js uninstall"
+    "uninstall-host": "node apps/host/dist/install.js uninstall",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
     "turbo": "^2.1.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.9"
   }
 }

@@ -1,0 +1,65 @@
+# Build, sign, notarize, and publish the Electron desktop app on a version tag.
+#
+# Trigger: push a tag like `v0.2.0` (matches the repo's tag-after-release
+# convention). Each OS runner builds its own artifacts and uploads them — plus
+# the latest*.yml update manifests — to the PUBLIC releases repo
+# (opentech-dev/tesseract-release), which is what running apps poll via
+# electron-updater. The code repo stays private.
+#
+# Required secrets (Settings → Secrets and variables → Actions):
+#   APPLE_CSC_LINK              base64 of the Developer ID Application .p12
+#   APPLE_CSC_KEY_PASSWORD      password for that .p12
+#   APPLE_ID                    Apple account email (notarization)
+#   APPLE_APP_SPECIFIC_PASSWORD app-specific password for APPLE_ID
+#   APPLE_TEAM_ID               10-char Apple Team ID
+#   WIN_CSC_LINK               base64 of the Windows code-signing .pfx
+#   WIN_CSC_KEY_PASSWORD       password for that .pfx
+#   RELEASES_REPO_TOKEN        fine-grained PAT with Contents:write on
+#                              opentech-dev/tesseract-release ONLY
+name: release-desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspace deps (shared, agent-core)
+        run: npm run build --workspaces --if-present
+        # The desktop build imports @fineguide-tesseract/shared + agent-core;
+        # build them first so their dist/ exists. (turbo handles ordering if
+        # `npm run build` at root is preferred — adjust if your turbo pipeline
+        # already covers this.)
+
+      - name: Publish desktop app
+        working-directory: apps/desktop
+        run: npm run release
+        env:
+          # electron-builder reads GH_TOKEN to upload to the releases repo.
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          # macOS signing + notarization (ignored on the Windows runner).
+          CSC_LINK: ${{ secrets.APPLE_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing (ignored on the macOS runner).
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}

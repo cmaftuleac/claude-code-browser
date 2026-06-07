@@ -949,6 +949,76 @@ body {
   background: #dc2626;
 }
 
+/* ── Run-mode picker (permission / effort / model) ───────────────────────── */
+
+.runmode { position: relative; display: inline-flex; }
+.runmode__trigger {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: transparent; border: 1px solid #3a3a5a; border-radius: 6px;
+  color: #cbd2db; font-size: 11px; padding: 4px 8px; cursor: pointer;
+  transition: all 0.1s;
+}
+.runmode__trigger:hover { background: #2a2a4a; color: #e0e0e0; }
+.runmode__caret { color: #6b7280; font-size: 9px; }
+.runmode__pop {
+  position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 50;
+  width: 300px; max-height: 60vh; overflow-y: auto;
+  background: #1f1f38; border: 1px solid #3a3a5a; border-radius: 8px;
+  padding: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.runmode__header { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; padding: 4px 8px 2px; }
+.runmode__item {
+  display: flex; flex-direction: column; gap: 1px; align-items: flex-start;
+  background: transparent; border: none; border-radius: 6px;
+  padding: 7px 9px; cursor: pointer; text-align: left; width: 100%;
+  transition: background 0.1s;
+}
+.runmode__item:hover { background: #2a2a4a; }
+.runmode__item.is-on { background: rgba(245, 158, 11, 0.14); }
+.runmode__item-label { font-size: 12px; font-weight: 600; color: #e8eaed; }
+.runmode__item.is-on .runmode__item-label { color: #f59e0b; }
+.runmode__item-desc { font-size: 10.5px; color: #9ca3af; line-height: 1.3; }
+.runmode__row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-top: 1px solid #2a2a4a; margin-top: 2px; }
+.runmode__row-label { font-size: 11px; color: #9ca3af; width: 40px; flex-shrink: 0; }
+.runmode__seg { display: flex; gap: 3px; }
+.runmode__seg--wrap { flex-wrap: wrap; }
+.runmode__seg-btn {
+  background: #2a2a4a; border: 1px solid transparent; border-radius: 5px;
+  color: #cbd2db; font-size: 10.5px; padding: 3px 7px; cursor: pointer;
+  transition: all 0.1s;
+}
+.runmode__seg-btn:hover { border-color: #4a4a6a; }
+.runmode__seg-btn.is-on { background: #f59e0b; color: #1a1a2e; }
+
+/* ── Permission request card (in-chat tool approval) ─────────────────────── */
+
+.perm-card {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 6px 0; padding: 11px 12px;
+  background: #1f1f38; border: 1px solid rgba(245, 158, 11, 0.5); border-radius: 8px;
+}
+.perm-card--decided { border-color: #2a2a4a; opacity: 0.7; }
+.perm-card__title { font-size: 12.5px; font-weight: 600; color: #e8eaed; }
+.perm-card__desc { font-size: 11.5px; color: #9ca3af; }
+.perm-card__detail {
+  margin: 0; padding: 7px 9px; background: #15152b; border: 1px solid #2a2a4a; border-radius: 6px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #cbd2db;
+  white-space: pre-wrap; word-break: break-word; max-height: 150px; overflow: auto;
+}
+.perm-card__actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.perm-card__btn {
+  background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 6px;
+  color: #cbd2db; font-size: 11.5px; padding: 5px 11px; cursor: pointer;
+  transition: all 0.1s;
+}
+.perm-card__btn:hover { background: #33335a; color: #e0e0e0; }
+.perm-card__btn--allow { background: #f59e0b; border-color: transparent; color: #1a1a2e; font-weight: 600; }
+.perm-card__btn--allow:hover { background: #fbbf24; }
+.perm-card__btn--deny { color: #f87171; }
+.perm-card__btn--deny:hover { background: rgba(239, 68, 68, 0.14); color: #f87171; }
+.perm-card__resolved { font-size: 11px; color: #9ca3af; font-style: italic; }
+
 /* ── Dropdown Menus ─────────────────────────────────────────────────────── */
 
 .dropdown-menu {
