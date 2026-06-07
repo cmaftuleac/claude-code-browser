@@ -1,4 +1,4 @@
-# Fineguide Tesseract
+# Claude Code Browser
 
 A Chrome extension that lets you **point at page elements** and have Claude Code fix them — no screenshots, no copy-pasting selectors.
 
@@ -14,13 +14,13 @@ A Chrome extension that lets you **point at page elements** and have Claude Code
   <img src="screenshots/screenshot-5.png" width="18%" />
 </p>
 
-> **Also in this repo:** a standalone **IDE** (`apps/desktop`) shipped as an Electron **desktop app** and as a **self-hostable web app**. The desktop app is fully local and works offline without login; the web app runs as a Docker stack (nginx + cloud API + agent/file gateway + Postgres) and is auth-gated. See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** (Docker + self-hosting) and **[docs/AUTH.md](docs/AUTH.md)** (accounts & login). The rest of this README covers the Chrome extension.
+> **Looking for the IDE?** The standalone "Photoshop for HTML" IDE — the Electron desktop app and the self-hostable web app — moved to its own repository: **[opentech-dev/tesseract](https://github.com/opentech-dev/tesseract)**. This repo is the Chrome extension and the npm `claude-code-browser` host bridge.
 
 ## How it works
 
 1. In VS Code, type `/browse localhost:3000` (or any URL)
 2. Chrome opens the page, workspace sources are registered automatically
-3. Open the Fineguide Tesseract side panel
+3. Open the Claude Code Browser side panel
 4. Click on elements to select them
 5. Ask Claude to fix, modify, or inspect them
 6. Claude sees the element, reads your source code, and makes the fix
