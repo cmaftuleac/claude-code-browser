@@ -104,7 +104,10 @@ jobs:
 
       - name: Dry run — skipped publish
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
-        run: echo "Dry run: built and packed v${{ steps.v.outputs.version }}, publish skipped."
+        # Block scalar: an inline `run:` whose text contains ": " reads as a nested
+        # mapping and makes the whole workflow file invalid.
+        run: |
+          echo "Dry run — built and packed v${{ steps.v.outputs.version }}, publish skipped."
 
       - name: Summary
         run: |
