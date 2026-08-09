@@ -19,26 +19,6 @@ export interface ElementAnchor {
   boundingRect?: { x: number; y: number; width: number; height: number };
 }
 
-// ── DOM Tree (Components sidebar) ────────────────────────────────────────────
-
-/** One node of the page DOM tree shown in the "Components" sidebar. Built in the
- *  guest (extension content-script / desktop editor preload) by walking the live
- *  DOM; `path` is a dot-separated child-index path (body-relative, e.g. "0.2.1")
- *  and `anchor` is the same ElementAnchor used for picks. */
-export interface DomTreeNode {
-  tagName: string;
-  id: string;
-  /** Space-separated class list (truncated). */
-  classes: string;
-  /** Dot-separated child-index path from the tree root (document.body = ""). */
-  path: string;
-  childCount: number;
-  children: DomTreeNode[];
-  /** True when children were capped (renders a "… N more" row). */
-  truncated: boolean;
-  anchor: ElementAnchor;
-}
-
 // ── Chat attachments ─────────────────────────────────────────────────────────
 
 /** A non-image file attached to a chat message. The host writes it to a temp dir
@@ -51,24 +31,14 @@ export interface AttachedFile {
   dataUrl: string;
 }
 
-// ── Visual Edit Journal ─────────────────────────────────────────────────────
+// ── Agent plan checklist ────────────────────────────────────────────────────
 
-/** A single visual edit made in the desktop "Photoshop for HTML" editor.
- *  The journal is serialized into a chat:send so the agent can persist the
- *  equivalent change to source ("Save to code"). */
-export interface EditJournalEntry {
-  /** CSS selector of the edited element at edit time */
-  selector: string;
-  /** XPath of the edited element */
-  xpath?: string;
-  /** Kind of edit performed */
-  type: 'style' | 'attr' | 'text' | 'move' | 'resize' | 'reparent';
-  /** For style/attr edits: the property/attribute name (e.g. "color", "width", "href") */
-  name?: string;
-  /** Value before the edit (string for style/attr/text; serialized for move/resize/reparent) */
-  before?: string;
-  /** Value after the edit */
-  after?: string;
+/** One entry of the agent's TodoWrite list. `activeForm` is the present-tense
+ *  label the CLI shows while the item is in progress ("Building the parser"). */
+export interface TodoItem {
+  content: string;
+  status: string;
+  activeForm?: string;
 }
 
 // ── Client → Server ─────────────────────────────────────────────────────────
@@ -94,33 +64,49 @@ export type ClientMessage =
       /** The project folder for this origin (sources[0]); becomes the session's cwd. */
       projectDir?: string;
       sources?: string[];  // additional project directories
-      /** Visual edits made in the desktop editor, to be persisted to source. */
-      editJournal?: EditJournalEntry[];
-      /** The browser instance this conversation drives (multi-instance desktop).
-       *  The extension/host ignore it (single pinned tab). */
-      browserId?: string;
-      /** Per-conversation run-mode override. Omitted ⇒ the backend falls back to
-       *  the user's saved agent settings. Applied at session creation; for a live
-       *  session see agent:set_mode. */
+      /** Per-conversation run-mode override, from the side panel's picker. Applied
+       *  at session creation; for a live session see agent:set_mode. */
       permissionMode?: PermissionModeSetting;
       effort?: EffortSetting;
       model?: string;
+      /** Ultracode: xhigh effort + standing dynamic-workflow orchestration for the
+       *  session. Rides the SDK's flag-settings layer, so it can also be flipped
+       *  mid-session (agent:set_mode). Needs an xhigh-capable model and workflows
+       *  enabled for the account — the CLI ignores it otherwise. */
+      ultracode?: boolean;
+      /** Unattended: auto-answer the agent's permission requests instead of showing
+       *  an approval card, so an overnight run never stalls. Each auto-approval is
+       *  reported back as agent:auto_decision. Only bites in modes that actually gate
+       *  (default / acceptEdits / plan / auto) — bypassPermissions never asks anyway. */
+      unattended?: boolean;
     }
   /** List sessions for the current website. The host scopes to the project folder
    *  resolved from origin (host:port) + the configured projectDir — Claude Code's
    *  on-disk sessions are the single source of truth, no extension-side registry. */
   | { type: 'session:list'; origin?: string; projectDir?: string }
-  | { type: 'session:resume'; sessionId: string }
-  | { type: 'agent:interrupt'; sessionId: string }
-  /** Live mid-session run-mode switch. permissionMode + model take effect on the
-   *  running Query immediately (setPermissionMode / setModel); effort has no live
-   *  SDK setter, so it only applies to conversations created afterwards. */
+  /** Load a session's transcript. `origin`/`projectDir` are optional but let the
+   *  host resolve the project folder and PRE-WARM the session (spawn + init +
+   *  history load off the critical path) so the first message doesn't pay for it. */
+  | { type: 'session:resume'; sessionId: string; origin?: string; projectDir?: string; url?: string }
+  /** Stop the running turn. `clientRequestId` identifies a brand-new chat whose
+   *  session_id hasn't resolved yet — without it the host can only guess which
+   *  pending conversation to stop, and would stop the wrong one. */
+  | { type: 'agent:interrupt'; sessionId: string; clientRequestId?: string }
+  /** Live mid-session run-mode switch — all of these take effect on the running
+   *  Query. permissionMode and model use dedicated setters; effort and ultracode go
+   *  through the flag-settings layer (applyFlagSettings) and are applied together in
+   *  one call, since the panel drives both from a single effort slider. */
   | {
       type: 'agent:set_mode';
       sessionId: string;
+      /** Identifies a brand-new chat whose session_id hasn't resolved yet, so a mode
+       *  flipped during its first turn still reaches the running Query. */
+      clientRequestId?: string;
       permissionMode?: PermissionModeSetting;
       effort?: EffortSetting;
       model?: string;
+      ultracode?: boolean;
+      unattended?: boolean;
     }
   /** The user's decision on a pending tool-permission request (replies to a prior
    *  agent:permission_request with the same requestId). `persist` ⇒ "allow & don't
@@ -143,7 +129,10 @@ export type ClientMessage =
   | { type: 'config:set'; projectDir?: string; cdpPort?: number }
   | { type: 'sources:set'; domain: string; paths: string[] }
   | { type: 'health:check' }
-  | { type: 'commands:list' }
+  /** List the slash commands / skills available for this website's project folder.
+   *  `origin`/`projectDir` resolve that folder — without them only the user-global
+   *  ~/.claude ones can be found. */
+  | { type: 'commands:list'; origin?: string; projectDir?: string }
   | {
       type: 'browser:response';
       requestId: string;
@@ -210,6 +199,65 @@ export type ServerMessage =
       /** Path that triggered the request, if applicable. */
       blockedPath?: string;
     }
+  /** A permission request that unattended mode answered on the user's behalf. The
+   *  panel records these so the run can be reviewed after the fact instead of the
+   *  approval simply never having been asked. */
+  | {
+      type: 'agent:auto_decision';
+      sessionId: string;
+      clientRequestId?: string;
+      toolName: string;
+      /** Human-readable one-liner: the command, path, or title that was approved. */
+      detail: string;
+      decision: 'allow';
+    }
+  /** The models this machine's Claude Code CLI actually offers, read from the
+   *  running Query (`supportedModels()`). Sent once per host process, after the
+   *  first session initializes. The picker falls back to MODEL_OPTIONS until then. */
+  | { type: 'agent:models'; models: { id: string; label: string }[] }
+  /** The session's permission mode changed on the HOST side rather than in the
+   *  picker — the agent called EnterPlanMode/ExitPlanMode, or the SDK reconciled
+   *  the mode at init. The panel mirrors it into the picker (without echoing an
+   *  agent:set_mode back), so the chip never lies about the live mode. */
+  | {
+      type: 'agent:mode_changed';
+      sessionId: string;
+      clientRequestId?: string;
+      permissionMode: PermissionModeSetting;
+    }
+  /** The agent's plan checklist (TodoWrite). Replaces the previous list wholesale —
+   *  the tool always writes the full list, never a delta. */
+  | { type: 'agent:todos'; sessionId: string; clientRequestId?: string; todos: TodoItem[] }
+  /** Subagent (Task tool) lifecycle. One card per taskId, updated in place: started →
+   *  progress* → done. */
+  | {
+      type: 'agent:task';
+      sessionId: string;
+      clientRequestId?: string;
+      taskId: string;
+      phase: 'started' | 'progress' | 'done';
+      /** Omitted when the update didn't change it — the client keeps what it has.
+       *  The SDK's task patches carry only changed fields. */
+      status?: 'running' | 'completed' | 'failed' | 'stopped';
+      description?: string;
+      subagentType?: string;
+      lastToolName?: string;
+      summary?: string;
+    }
+  /** What the session is doing when it isn't streaming tokens — compaction and the
+   *  pre-response wait are both long silences that otherwise look like a hang.
+   *  `null` clears the indicator. */
+  | { type: 'agent:phase'; sessionId: string; clientRequestId?: string; phase: 'compacting' | 'requesting' | null }
+  /** What this machine's CLI actually offers, straight from the session's init frame.
+   *  Authoritative, unlike the host's filesystem scan for slash commands. */
+  | {
+      type: 'agent:capabilities';
+      sessionId: string;
+      clientRequestId?: string;
+      slashCommands: string[];
+      agentTypes: string[];
+      tools: string[];
+    }
   | { type: 'session:list'; sessions: SessionInfo[] }
   | { type: 'session:created'; sessionId: string; clientRequestId?: string }
   | {
@@ -262,159 +310,3 @@ export interface SessionMessage {
   timestamp?: number;
 }
 
-// ── Multiplexed control-plane envelope ───────────────────────────────────────
-//
-// The web client opens exactly ONE WebSocket to the backend (see web-transport).
-// Everything is multiplexed over it via an Envelope tagged with a `channel`,
-// optionally routed to a specific `hostId` (the cloud server, or one of the
-// user's Electron machines acting as a host daemon). The legacy raw
-// ClientMessage/ServerMessage protocol above is unchanged — it is carried as the
-// payload of the `agent` channel, and still used as-is over Electron IPC and the
-// extension's native-messaging transport (which do NOT use this envelope).
-//
-// Media (the live browser video) is NEVER carried here — it flows peer-to-peer
-// over WebRTC. This channel only relays SDP/ICE signaling for it.
-
-/** Logical channels multiplexed over the single control WebSocket. */
-export type ControlChannel =
-  | 'agent' // ClientMessage / ServerMessage (legacy protocol above), per session
-  | 'host' // host registry: list / select / register / heartbeat / online / offline
-  | 'browser' // human-driven browser control: attach / detach / input / nav / state
-  | 'signal' // WebRTC SDP/ICE relay + ICE-server (STUN/TURN) credentials
-  | 'frame' // fallback JPEG/WebCodecs video stream (binary; see BINARY FRAME note)
-  | 'notify'; // server→client notifications / toasts
-
-/** One framed message on the control WS. `payload` is narrowed by `channel`. */
-export interface Envelope<P = unknown> {
-  channel: ControlChannel;
-  /** Host this frame is routed to/from. Absent = the backend itself (e.g. host:list). */
-  hostId?: string;
-  /** Agent session id (channels 'agent' / 'browser'). */
-  sessionId?: string;
-  /** Browser surface id (channels 'browser' / 'signal' / 'frame'). */
-  browserId?: string;
-  payload: P;
-}
-
-// ── `host` channel — discovery & registry ────────────────────────────────────
-
-export interface HostInfo {
-  hostId: string;
-  name: string;
-  kind: 'server' | 'electron';
-  /** 'darwin' | 'win32' | 'linux' for electron hosts; undefined for the server. */
-  platform?: string;
-  online: boolean;
-  /** Advertised capabilities, e.g. ['browser', 'webrtc', 'fs']. */
-  caps?: string[];
-}
-
-/** Web client → backend (host channel). */
-export type HostClientMessage =
-  | { type: 'host:list' }
-  | { type: 'host:select'; hostId: string };
-
-/** Backend → web client (host channel). */
-export type HostServerMessage =
-  | { type: 'host:list'; hosts: HostInfo[] }
-  | { type: 'host:online'; host: HostInfo }
-  | { type: 'host:offline'; hostId: string };
-
-/** Electron host daemon → backend, over the host-side WS (registration). */
-export type HostRegisterMessage =
-  | { type: 'host:register'; name: string; platform: string; caps?: string[] }
-  | { type: 'host:heartbeat' };
-
-// ── `signal` channel — WebRTC signaling (no media) ───────────────────────────
-
-/** ICE server config without depending on lib.dom (shared is consumed by Node too). */
-export interface IceServerConfig {
-  urls: string | string[];
-  username?: string;
-  credential?: string;
-}
-
-/** DOM-free shape of RTCIceCandidateInit, for relaying candidates through Node. */
-export interface IceCandidateInit {
-  candidate?: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-  usernameFragment?: string | null;
-}
-
-export type SignalMessage =
-  /** backend → both peers: STUN/TURN servers to use (short-TTL TURN creds). */
-  | { type: 'signal:ready'; iceServers: IceServerConfig[] }
-  | { type: 'signal:offer'; sdp: string }
-  | { type: 'signal:answer'; sdp: string }
-  | { type: 'signal:ice'; candidate: IceCandidateInit }
-  | { type: 'signal:close' };
-
-// ── `browser` channel — human-driven control of the mirrored page ────────────
-
-export type BrowserInputEvent =
-  | {
-      kind: 'mouse';
-      action: 'move' | 'down' | 'up' | 'click';
-      /** Coordinates in CSS px relative to the streamed viewport. */
-      x: number;
-      y: number;
-      button?: number; // 0 left, 1 middle, 2 right
-      buttons?: number;
-      clickCount?: number;
-    }
-  | { kind: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
-  | {
-      kind: 'key';
-      action: 'down' | 'up' | 'char';
-      key: string;
-      code?: string;
-      text?: string;
-      /** Bitmask: 1 Alt, 2 Ctrl, 4 Meta, 8 Shift (CDP convention). */
-      modifiers?: number;
-    };
-
-/** Web client → host (browser channel). */
-export type BrowserControlMessage =
-  | { type: 'browser:attach'; url?: string }
-  | { type: 'browser:detach' }
-  | { type: 'browser:input'; event: BrowserInputEvent }
-  | { type: 'browser:nav'; action: 'back' | 'forward' | 'reload' | 'goto'; url?: string };
-
-/** Host → web client (browser channel). */
-export type BrowserStateMessage =
-  | {
-      type: 'browser:state';
-      url: string;
-      title: string;
-      canGoBack: boolean;
-      canGoForward: boolean;
-      loading: boolean;
-    }
-  /** Stream metadata for the fallback `frame` channel: codec + viewport. */
-  | { type: 'browser:config'; transport: 'webrtc' | 'frames'; codec?: string; description?: string; width: number; height: number };
-
-// ── `notify` channel ─────────────────────────────────────────────────────────
-
-export type NotifyMessage = { type: 'notify'; level: 'info' | 'success' | 'warning' | 'error'; message: string };
-
-// ── BINARY FRAME note (`frame` channel) ──────────────────────────────────────
-//
-// The fallback video stream sends binary WS frames (ArrayBuffer), NOT JSON
-// envelopes — base64 in JSON would add ~33% + GC churn. Wire layout (Phase 2):
-//   [ u8 version=1 ][ u8 flags (bit0: keyframe) ][ u8 browserIdLen ]
-//   [ browserId utf8 ][ u32 seq ][ ...encoded payload (JPEG or VideoChunk) ]
-// `browser:config` (above) announces the codec/dimensions before frames start.
-// Defined as a comment now; the codec helpers land with the Phase 2 fallback.
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Build a control-plane envelope. */
-export function envelope<P>(channel: ControlChannel, payload: P, route?: { hostId?: string; sessionId?: string; browserId?: string }): Envelope<P> {
-  return { channel, payload, ...route };
-}
-
-/** Narrowing guard for a parsed control-WS JSON message. */
-export function isEnvelope(m: unknown): m is Envelope {
-  return typeof m === 'object' && m !== null && typeof (m as { channel?: unknown }).channel === 'string' && 'payload' in (m as object);
-}

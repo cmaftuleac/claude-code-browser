@@ -40,6 +40,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         sidepanel: resolve(__dirname, 'sidepanel.html'),
+        // Standalone plan viewer, opened as a popup window from a plan-approval card.
+        plan: resolve(__dirname, 'plan.html'),
         'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
         'content-script': resolve(__dirname, 'src/content/content-script.ts'),
       },

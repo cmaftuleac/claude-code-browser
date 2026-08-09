@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Fineguide Tesseract",
+  "name": "Claude Code Browser",
   "version": "0.2.6",
   "author": "Fineguide.AI (Corneliu Maftuleac) — https://fineguide.ai",
   "description": "Point at page elements and let Claude Code fix them. Visual debugging with picker, DOM tree, streaming chat. By Fineguide.AI.",
@@ -19,7 +19,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Fineguide Tesseract"
+    "default_title": "Claude Code Browser"
   },
   "icons": {
     "16": "icon-16.png",

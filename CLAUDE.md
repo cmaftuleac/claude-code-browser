@@ -1,6 +1,6 @@
 # Claude Code Browser — project notes for Claude
 
-The **Chrome extension + npm `claude-code-browser` host bridge**. The IDE / desktop / web-app product was split out into a separate repo — [`opentech-dev/tesseract`](https://github.com/opentech-dev/tesseract) — and no longer lives here.
+The **Chrome extension + npm `claude-code-browser` host bridge**. This is a standalone, independent project: the extension, the host, and the types they share. Nothing else belongs here.
 
 ## Published identifiers
 
@@ -24,11 +24,9 @@ This is an npm workspace monorepo (npm workspaces + Turborepo):
 
 - `apps/extension` — the Chrome extension (React + Vite, MV3, side panel UI). Private, not published to npm.
 - `apps/host` — the Node.js native messaging host. **Published to npm as `claude-code-browser`**. Bridges the Chrome extension to the user's local Claude Code CLI.
-- `packages/shared` — shared TypeScript types (`ws-protocol`, `auth`). Private. **This package is duplicated in the `tesseract` repo** (the IDE needs it too) — keep the two copies in sync when changing the shared protocol/types.
+- `packages/shared` — shared TypeScript types (`ws-protocol`, `settings`) used by both. Private. Keep it to what the extension and host actually import; it is not a dumping ground for types from other projects.
 
 The npm package is *not* a standalone Claude Code — it requires the user's Claude Code CLI installed and authenticated; the installer auto-installs it if missing.
-
-> The Electron desktop app, the web build, `apps/server`, `apps/api`, `packages/agent-core`, and the Docker stack moved to [`opentech-dev/tesseract`](https://github.com/opentech-dev/tesseract).
 
 ## Common operations
 
@@ -46,7 +44,6 @@ The npm package is *not* a standalone Claude Code — it requires the user's Cla
 
 ## Things that have bitten this project before
 
-- **`packages/shared` is duplicated** with the `tesseract` repo. A protocol/type change here may need mirroring there (and vice-versa).
 - **Pasting npm tokens into chat.** Treat any token shared in a transcript as compromised; rotate immediately at https://www.npmjs.com/settings/~/tokens.
 - **classic publish token hits EOTP (2FA).** Use a granular/automation token or `--otp`.
 - **macOS auto-update quarantine.** Host auto-update via npm-from-Chrome quarantines binaries → Gatekeeper blocks ripgrep; the installer clears the quarantine flag.

@@ -3,7 +3,7 @@
  */
 
 import { listSessions, getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
-import type { SessionInfo, SessionMessage, SessionMessageBlock } from '@fineguide-tesseract/shared';
+import type { SessionInfo, SessionMessage, SessionMessageBlock } from '@claude-code-browser/shared';
 import { normalizeDir } from './project-dir.js';
 
 export class SessionStore {

@@ -760,6 +760,26 @@ body {
   color: #fca5a5;
 }
 
+/* Non-image attachments: a compact chip row. Images get thumbnails just below;
+   a document has nothing to preview, so the filename IS the affordance. */
+.chat-input__files {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 6px 8px 0;
+}
+.chat-input__file {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 6px;
+  padding: 3px 6px 3px 9px; font-size: 11.5px; color: #cbd2db;
+}
+.chat-input__file-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
+}
+.chat-input__file-remove {
+  background: none; border: none; color: #9ca3af; cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 0 2px; flex-shrink: 0;
+}
+.chat-input__file-remove:hover { color: #f87171; }
+
 .chat-input__image-preview {
   position: relative;
   display: inline-block;
@@ -962,10 +982,15 @@ body {
 .runmode__caret { color: #6b7280; font-size: 9px; }
 .runmode__pop {
   position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 50;
+  animation: runmode-pop-in 0.14s ease-out;
   width: 300px; max-height: 60vh; overflow-y: auto;
   background: #1f1f38; border: 1px solid #3a3a5a; border-radius: 8px;
   padding: 6px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: flex; flex-direction: column; gap: 2px;
+}
+@keyframes runmode-pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .runmode__header { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; padding: 4px 8px 2px; }
 .runmode__item {
@@ -979,17 +1004,96 @@ body {
 .runmode__item-label { font-size: 12px; font-weight: 600; color: #e8eaed; }
 .runmode__item.is-on .runmode__item-label { color: #f59e0b; }
 .runmode__item-desc { font-size: 10.5px; color: #9ca3af; line-height: 1.3; }
+.runmode__toggle {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: transparent; border: none; border-top: 1px solid #2a2a4a;
+  border-radius: 0 0 6px 6px; padding: 8px 9px; margin-top: 2px;
+  cursor: pointer; text-align: left; transition: background 0.1s;
+}
+.runmode__toggle:hover { background: #2a2a4a; }
+.runmode__toggle-text { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.runmode__toggle.is-on .runmode__item-label { color: #f59e0b; }
+/* Track + knob. The knob is the inner <span>; `is-on` slides it right. */
+.runmode__switch {
+  position: relative; flex-shrink: 0; width: 30px; height: 17px; border-radius: 9px;
+  background: #2a2a4a; border: 1px solid #3a3a5a; transition: background 0.15s, border-color 0.15s;
+}
+.runmode__toggle.is-on .runmode__switch { background: #f59e0b; border-color: transparent; }
+.runmode__switch > span {
+  position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%;
+  background: #9ca3af; transition: transform 0.15s, background 0.15s;
+}
+.runmode__toggle.is-on .runmode__switch > span { transform: translateX(13px); background: #1a1a2e; }
+
 .runmode__row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-top: 1px solid #2a2a4a; margin-top: 2px; }
 .runmode__row-label { font-size: 11px; color: #9ca3af; width: 40px; flex-shrink: 0; }
-.runmode__seg { display: flex; gap: 3px; }
-.runmode__seg--wrap { flex-wrap: wrap; }
-.runmode__seg-btn {
+
+/* Model dropdown. Expands in flow (the popover above it scrolls, so a floating
+   menu would be clipped); the label pins to the top so it stays put as it opens. */
+.runmode__row--model { align-items: flex-start; }
+.runmode__row--model .runmode__row-label { padding-top: 5px; }
+/* Effort ladder — a styled range input. Replaces a segmented row that overflowed
+   the 300px popover once the option list grew; a slider is fixed-width no matter
+   how many rungs there are, and encodes the ordering the buttons only implied. */
+.runmode__effort {
+  padding: 8px 9px 10px;
+  border-top: 1px solid #2a2a4a;
+  margin-top: 2px;
+}
+.runmode__effort-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.runmode__effort-value { font-size: 11.5px; font-weight: 600; color: #e8eaed; margin-left: auto; }
+.runmode__effort-hint { font-weight: 400; color: #9ca3af; }
+.runmode__effort.is-ultra .runmode__effort-value { color: #f59e0b; }
+
+.runmode__slider {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 16px;
+  background: transparent; cursor: pointer;
+}
+/* Track: filled up to --pct (set inline from the current rung), rest unfilled. */
+.runmode__slider::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, #f59e0b 0 var(--pct, 0%), #2a2a4a var(--pct, 0%) 100%);
+}
+.runmode__slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; margin-top: -4.5px;
+  border-radius: 50%; background: #e8eaed;
+  border: 2px solid #1f1f38;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  transition: background 0.12s, transform 0.12s;
+}
+.runmode__slider:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.runmode__slider:focus-visible { outline: none; }
+.runmode__slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.4); }
+.runmode__effort.is-ultra .runmode__slider::-webkit-slider-thumb { background: #f59e0b; }
+
+.runmode__dd { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.runmode__dd-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%;
   background: #2a2a4a; border: 1px solid transparent; border-radius: 5px;
-  color: #cbd2db; font-size: 10.5px; padding: 3px 7px; cursor: pointer;
+  color: #cbd2db; font-size: 10.5px; padding: 4px 7px; cursor: pointer;
   transition: all 0.1s;
 }
-.runmode__seg-btn:hover { border-color: #4a4a6a; }
-.runmode__seg-btn.is-on { background: #f59e0b; color: #1a1a2e; }
+.runmode__dd-trigger:hover { border-color: #4a4a6a; }
+.runmode__dd-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runmode__dd-menu {
+  display: flex; flex-direction: column; gap: 1px;
+  background: #191932; border: 1px solid #3a3a5a; border-radius: 6px; padding: 3px;
+  animation: runmode-dd-in 0.12s ease-out;
+}
+@keyframes runmode-dd-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.runmode__dd-opt {
+  background: transparent; border: none; border-radius: 4px;
+  color: #cbd2db; font-size: 10.5px; text-align: left; padding: 4px 7px; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background 0.1s, color 0.1s;
+}
+.runmode__dd-opt:hover { background: #2a2a4a; }
+.runmode__dd-opt.is-on { background: #f59e0b; color: #1a1a2e; font-weight: 600; }
 
 /* ── Permission request card (in-chat tool approval) ─────────────────────── */
 
@@ -1006,6 +1110,101 @@ body {
   font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #cbd2db;
   white-space: pre-wrap; word-break: break-word; max-height: 150px; overflow: auto;
 }
+/* A plan is the one approval whose body is long-form prose, so it gets the panel's
+   full width and a prose renderer instead of the command <pre>. */
+.perm-card--plan { max-width: 100%; }
+.perm-card__plan {
+  padding: 10px 12px;
+  background: #15152b; border: 1px solid #2a2a4a; border-radius: 6px;
+  /* Tall enough to read a real plan without scrolling for most cases; still capped
+     so one huge plan can't push the Allow/Deny buttons off-screen. */
+  max-height: 460px; overflow-y: auto; overscroll-behavior: contain;
+  font-size: 12.5px; line-height: 1.55; color: #d7dae0;
+}
+/* Markdown internals — the shared .markdown rules are tuned for chat bubbles, so
+   tighten the vertical rhythm here and stop the first/last child adding dead space. */
+.perm-card__plan > :first-child { margin-top: 0; }
+.perm-card__plan > :last-child { margin-bottom: 0; }
+.perm-card__plan p { margin: 0 0 8px; }
+.perm-card__plan ul,
+.perm-card__plan ol { margin: 0 0 8px; padding-left: 18px; }
+.perm-card__plan li { margin: 2px 0; }
+.perm-card__plan li::marker { color: #6b7280; }
+.perm-card__plan h1,
+.perm-card__plan h2,
+.perm-card__plan h3,
+.perm-card__plan h4 {
+  margin: 12px 0 6px; font-size: 12.5px; font-weight: 600; color: #e8eaed;
+  line-height: 1.35;
+}
+.perm-card__plan code {
+  background: #23234a; border-radius: 3px; padding: 1px 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px;
+  /* Long paths/identifiers must wrap rather than force the card to scroll sideways. */
+  overflow-wrap: anywhere;
+}
+.perm-card__plan pre {
+  margin: 0 0 8px; padding: 8px 10px; background: #101024;
+  border: 1px solid #2a2a4a; border-radius: 5px; overflow-x: auto;
+}
+.perm-card__plan pre code { background: none; padding: 0; overflow-wrap: normal; }
+.perm-card__plan a { color: #a5b4fc; }
+.perm-card__plan hr { border: none; border-top: 1px solid #2a2a4a; margin: 10px 0; }
+
+.perm-card__expand {
+  align-self: flex-start;
+  background: transparent; border: 1px solid #3a3a5a; border-radius: 6px;
+  color: #a5b4fc; font-size: 11px; padding: 4px 9px; cursor: pointer;
+  transition: all 0.1s;
+}
+.perm-card__expand:hover { background: #2a2a4a; border-color: #4a4a6a; color: #c7d2fe; }
+
+/* ── Standalone plan window (plan.html) ──────────────────────────────────── */
+
+.planview { display: flex; flex-direction: column; height: 100%; background: #1a1a2e; }
+.planview__bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-shrink: 0; padding: 10px 18px;
+  background: #16162a; border-bottom: 1px solid #2a2a4a;
+}
+.planview__title { font-size: 13px; font-weight: 600; color: #e8eaed; }
+.planview__copy {
+  background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 6px;
+  color: #cbd2db; font-size: 11.5px; padding: 4px 10px; cursor: pointer;
+}
+.planview__copy:hover { background: #33335a; color: #e0e0e0; }
+.planview__body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 20px 24px 40px;
+  /* Long-form reading measure — full-bleed text in a 760px window is tiring. */
+  max-width: 78ch; width: 100%; margin: 0 auto;
+  font-size: 14px; line-height: 1.65; color: #d7dae0;
+}
+.planview__body > :first-child { margin-top: 0; }
+.planview__body p { margin: 0 0 12px; }
+.planview__body ul, .planview__body ol { margin: 0 0 12px; padding-left: 22px; }
+.planview__body li { margin: 4px 0; }
+.planview__body li::marker { color: #6b7280; }
+.planview__body h1, .planview__body h2, .planview__body h3, .planview__body h4 {
+  margin: 20px 0 10px; color: #e8eaed; line-height: 1.3;
+}
+.planview__body h1 { font-size: 19px; }
+.planview__body h2 { font-size: 16px; }
+.planview__body h3, .planview__body h4 { font-size: 14px; }
+.planview__body code {
+  background: #23234a; border-radius: 3px; padding: 1px 5px;
+  font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.planview__body pre {
+  margin: 0 0 12px; padding: 12px 14px; background: #101024;
+  border: 1px solid #2a2a4a; border-radius: 6px; overflow-x: auto;
+}
+.planview__body pre code { background: none; padding: 0; overflow-wrap: normal; }
+.planview__body a { color: #a5b4fc; }
+.planview__body hr { border: none; border-top: 1px solid #2a2a4a; margin: 18px 0; }
+.planview__empty { color: #8b8b9a; font-style: italic; }
+
 .perm-card__actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .perm-card__btn {
   background: #2a2a4a; border: 1px solid #3a3a5a; border-radius: 6px;
@@ -1018,6 +1217,97 @@ body {
 .perm-card__btn--deny { color: #f87171; }
 .perm-card__btn--deny:hover { background: rgba(239, 68, 68, 0.14); color: #f87171; }
 .perm-card__resolved { font-size: 11px; color: #9ca3af; font-style: italic; }
+.perm-card__btn:disabled { opacity: 0.5; cursor: default; }
+.perm-card__btn:disabled:hover { background: #2a2a4a; color: #cbd2db; }
+.perm-card__btn--allow:disabled:hover { background: #f59e0b; color: #1a1a2e; }
+
+/* ── Question card (AskUserQuestion) ─────────────────────────────────────── */
+/* Indigo rather than the approval card's amber: this is the agent asking, not a
+   gate the user has to clear. */
+.question-card {
+  display: flex; flex-direction: column; gap: 12px;
+  margin: 6px 0; padding: 11px 12px;
+  background: #1f1f38; border: 1px solid rgba(99, 102, 241, 0.55); border-radius: 8px;
+  animation: question-in 0.15s ease-out;
+}
+@keyframes question-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.question-card--decided { border-color: #2a2a4a; opacity: 0.75; }
+.question-card__q { display: flex; flex-direction: column; gap: 6px; }
+.question-card__header {
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: #818cf8;
+}
+.question-card__title { font-size: 12.5px; font-weight: 600; color: #e8eaed; line-height: 1.35; }
+.question-card__options { display: flex; flex-direction: column; gap: 4px; }
+.question-card__opt {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left;
+  background: #22224022; border: 1px solid #3a3a5a; border-radius: 6px;
+  padding: 7px 9px; cursor: pointer; transition: all 0.1s;
+}
+.question-card__opt:hover:not(:disabled) { border-color: #6366f1; background: #6366f118; }
+.question-card__opt.is-on { border-color: #6366f1; background: #6366f126; }
+.question-card__opt:disabled { cursor: default; }
+.question-card__opt-label { font-size: 12px; font-weight: 600; color: #e8eaed; }
+.question-card__opt.is-on .question-card__opt-label { color: #a5b4fc; }
+.question-card__opt-desc { font-size: 10.5px; color: #9ca3af; line-height: 1.35; }
+.question-card__hint { font-size: 10px; color: #6b7280; }
+
+/* ── Subagent task card (agent:task) ─────────────────────────────────────── */
+.task-card {
+  display: flex; flex-direction: column; gap: 5px;
+  margin: 6px 0; padding: 8px 11px; max-width: 90%;
+  background: #1e1e38; border-left: 2px solid #6366f1; border-radius: 6px;
+}
+.task-card--completed { border-left-color: #22c55e; }
+.task-card--failed, .task-card--stopped { border-left-color: #ef4444; }
+.task-card__head { display: flex; align-items: center; gap: 7px; }
+.task-card__icon { color: #6366f1; font-size: 11px; flex-shrink: 0; }
+.task-card--completed .task-card__icon { color: #22c55e; }
+.task-card--failed .task-card__icon, .task-card--stopped .task-card__icon { color: #ef4444; }
+.task-card__icon--spin { animation: task-spin 1.1s linear infinite; display: inline-block; }
+@keyframes task-spin { to { transform: rotate(360deg); } }
+.task-card__desc { font-size: 12px; color: #e0e0e0; flex: 1; min-width: 0; }
+.task-card__type {
+  font-size: 9.5px; color: #a5b4fc; background: #6366f120;
+  border-radius: 4px; padding: 1px 5px; flex-shrink: 0;
+}
+.task-card__sub { font-size: 10.5px; color: #8b8ba0; padding-left: 18px; }
+.task-card__summary { font-size: 11.5px; color: #b8bcc8; padding-left: 18px; }
+
+/* ── Plan checklist (TodoWrite) ──────────────────────────────────────────── */
+.todo-panel { flex-shrink: 0; background: #16162a; border-bottom: 1px solid #2a2a4a; }
+.todo-panel__head {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  background: transparent; border: none; padding: 6px 12px;
+  color: #d1d5db; font-size: 11.5px; cursor: pointer; text-align: left;
+}
+.todo-panel__head:hover { background: #1e1e3a; }
+.todo-panel__arrow { color: #6b7280; font-size: 9px; flex-shrink: 0; }
+.todo-panel__headline { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.todo-panel__count { color: #6b7280; font-size: 10px; flex-shrink: 0; }
+.todo-panel__list {
+  list-style: none; margin: 0; padding: 0 12px 8px 12px; max-height: 180px; overflow-y: auto;
+  animation: todo-list-in 0.16s ease-out;
+}
+@keyframes todo-list-in {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 180px; }
+}
+.todo-panel__item { display: flex; gap: 7px; padding: 3px 0; font-size: 11.5px; line-height: 1.35; }
+.todo-panel__mark { flex-shrink: 0; color: #6b7280; }
+.todo-panel__item--completed .todo-panel__mark { color: #22c55e; }
+.todo-panel__item--completed .todo-panel__text { color: #6b7280; text-decoration: line-through; }
+.todo-panel__item--in_progress .todo-panel__mark { color: #6366f1; }
+.todo-panel__item--in_progress .todo-panel__text { color: #e0e0e0; font-weight: 500; }
+.todo-panel__text { color: #9ca3af; }
+
+/* Silent-stretch indicator: compaction / waiting on the model. */
+.chat-sidebar__phase {
+  flex-shrink: 0; padding: 5px 12px; font-size: 11px; font-style: italic;
+  color: #a5b4fc; background: #6366f112; border-bottom: 1px solid #2a2a4a;
+}
 
 /* ── Dropdown Menus ─────────────────────────────────────────────────────── */
 

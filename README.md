@@ -14,8 +14,6 @@ A Chrome extension that lets you **point at page elements** and have Claude Code
   <img src="screenshots/screenshot-5.png" width="18%" />
 </p>
 
-> **Looking for the IDE?** The standalone "Photoshop for HTML" IDE — the Electron desktop app and the self-hostable web app — moved to its own repository: **[opentech-dev/tesseract](https://github.com/opentech-dev/tesseract)**. This repo is the Chrome extension and the npm `claude-code-browser` host bridge.
-
 ## How it works
 
 1. In VS Code, type `/browse localhost:3000` (or any URL)

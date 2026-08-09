@@ -1,4 +1,4 @@
-# Speaker script — Fineguide Tesseract
+# Speaker script — Claude Code Browser
 
 ~13 minutes spoken. `[S#]` markers map to slides in [`slides.md`](slides.md). `(beat)` = pause. Bracketed italics are stage directions, not spoken.
 
@@ -16,7 +16,7 @@ Hi everyone. I'm Corneliu. (beat) I want to start with a complaint.
 
 You're working with an AI coding agent. It's great at code. And then you look at the screen and you think: "that button is the wrong color." (beat) Simple thought. Now try to *tell the AI which button.*
 
-That tiny gap — between what you see and what the AI can act on — is the whole reason this project exists. This is **Fineguide Tesseract**, and the honest subtitle is: a weekend project that somehow ended up on the Chrome Web Store.
+That tiny gap — between what you see and what the AI can act on — is the whole reason this project exists. This is **Claude Code Browser**, and the honest subtitle is: a weekend project that somehow ended up on the Chrome Web Store.
 
 ---
 

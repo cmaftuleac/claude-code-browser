@@ -1,11 +1,11 @@
-# Slide outline — Fineguide Tesseract
+# Slide outline — Claude Code Browser
 
 ~14 content slides + title + closing. Keep text sparse; you narrate the rest. Visual notes in _italics_. Real screenshots live in [`images/`](images/).
 
 ---
 
 ### Slide 0 — Title
-**Fineguide Tesseract**
+**Claude Code Browser**
 Point at it. Ask. Fixed.
 
 - Your name / handle (@cmaftuleac · Fineguide.AI)

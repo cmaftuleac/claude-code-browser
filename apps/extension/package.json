@@ -1,5 +1,5 @@
 {
-  "name": "@fineguide-tesseract/extension",
+  "name": "@claude-code-browser/extension",
   "version": "0.2.6",
   "private": true,
   "license": "MIT",
@@ -13,11 +13,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@fineguide-tesseract/shared": "*",
+    "@claude-code-browser/shared": "*",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.47",
     "mermaid": "^11.15.0",
