@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
-import type { ClientMessage, ServerMessage } from '@fineguide-tesseract/shared';
+import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import { useConnectionStore } from '../stores/connection-store';
 import { useChatStore, bumpStat, type ChatMessage } from '../stores/chat-store';
 import { handleBrowserRequest } from '../browser-handler';
@@ -68,11 +68,22 @@ export function useNativePort() {
   const portRef = useRef<chrome.runtime.Port | null>(null);
   const setStatus = useConnectionStore((s) => s.setStatus);
 
-  const send = useCallback((msg: ClientMessage) => {
+  /** Returns whether the message actually went out. Callers that record a decision
+   *  locally (approval cards) must not claim one was made when the port was dead —
+   *  the card would go grey while the host's promise stays parked forever. */
+  const send = useCallback((msg: ClientMessage): boolean => {
+    const port = portRef.current;
+    if (!port) return false;
+    // The panel↔service-worker port being open says nothing about the SW↔host one:
+    // when the host dies the SW reports `_native_status {connected:false}` and this
+    // port stays up, so a postMessage would "succeed" into a void. Callers that record
+    // a decision locally must not be told the host got it.
+    if (useConnectionStore.getState().status === 'disconnected') return false;
     try {
-      portRef.current?.postMessage(msg);
+      port.postMessage(msg);
+      return true;
     } catch {
-      // Port disconnected
+      return false;   // port disconnected between the null check and the post
     }
   }, []);
 
@@ -131,6 +142,12 @@ export function useNativePort() {
             cs.resetUpdateAttempt();
             setStatus('connected');
             requestSessionList();
+            // Ask the host to re-state what a reconnecting panel can't know: the CLI's
+            // model list (this panel starts with an empty one) and which turns are
+            // STILL running. The port drop cleared every running flag, but the service
+            // worker deliberately keeps the host alive, so those turns kept streaming —
+            // without this they'd have no spinner and no Stop button.
+            send({ type: 'health:check' });
             break;
           }
 
@@ -242,6 +259,11 @@ export function useNativePort() {
           }
 
           store.appendDelta(key, targetId, msg.delta);
+          // Tokens are arriving, so the session is demonstrably not waiting on the
+          // model. The SDK keeps repeating `status: requesting` for the whole turn and
+          // doesn't reliably send a clearing frame, which would otherwise leave
+          // "Waiting for the model…" pinned above a visibly streaming answer.
+          store.setPhase(key, null);
           break;
         }
 
@@ -251,7 +273,72 @@ export function useNativePort() {
           if (msg.toolName === '_update_') {
             store.updateLastToolUse(key, msg.summary);
           } else {
-            store.addToolUseMessage(key, msg.summary);
+            // `_notice_` bubbles (retries, hook output, compaction) look like tool
+            // bubbles but aren't the call in flight — flagged so the tool call's own
+            // closing `_update_` doesn't overwrite whichever landed last.
+            store.addToolUseMessage(key, msg.summary, msg.toolName === '_notice_');
+          }
+          break;
+        }
+
+        case 'agent:auto_decision': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.addAutoDecision(key, { toolName: msg.toolName, detail: msg.detail });
+          break;
+        }
+
+        case 'agent:models': {
+          store.setModels(msg.models);
+          break;
+        }
+
+        case 'agent:mode_changed': {
+          // Recorded against the session it belongs to. Run modes are per-conversation,
+          // so a background chat entering plan mode is stored on that chat and simply
+          // isn't displayed until the user switches to it — no foreground guard needed.
+          const key = routeKey(msg);
+          if (key) store.syncPermissionMode(key, msg.permissionMode);
+          break;
+        }
+
+        case 'agent:todos': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.setTodos(key, msg.todos);
+          break;
+        }
+
+        case 'agent:task': {
+          const key = routeKey(msg);
+          if (!key) break;
+          // Pass through only the fields this event actually carries — the store
+          // merges onto the existing card, so filling a placeholder description here
+          // would rename a running task to "subagent task" on every status-only update.
+          store.upsertTask(key, {
+            taskId: msg.taskId,
+            ...(msg.status ? { status: msg.status } : {}),
+            ...(msg.description ? { description: msg.description } : {}),
+            ...(msg.subagentType ? { subagentType: msg.subagentType } : {}),
+            ...(msg.lastToolName ? { lastToolName: msg.lastToolName } : {}),
+            ...(msg.summary ? { summary: msg.summary } : {}),
+          });
+          break;
+        }
+
+        case 'agent:phase': {
+          const key = routeKey(msg);
+          if (!key) break;
+          store.setPhase(key, msg.phase);
+          break;
+        }
+
+        case 'agent:capabilities': {
+          // The CLI knows commands the host's filesystem scan cannot see (built-ins,
+          // plugin-provided ones). It carries no descriptions though, so this is a
+          // separate channel that the menu MERGES with the scan rather than replaces.
+          if (msg.slashCommands.length > 0) {
+            window.dispatchEvent(new CustomEvent('ccb:capabilities', { detail: msg.slashCommands }));
           }
           break;
         }
@@ -274,6 +361,10 @@ export function useNativePort() {
         case 'chat:complete': {
           const key = routeKey(msg);
           if (!key) break;
+          // A turn that ends without streaming any text (interrupted, or pure
+          // tool use) never hits the chat:stream clear above, which would pin
+          // "Waiting for the model…" above a finished conversation.
+          store.setPhase(key, null);
           store.completeMessage(key, msg.messageId, msg.result);
           store.expirePermissions(key);
           store.setSessionRunning(key, false);
@@ -285,6 +376,7 @@ export function useNativePort() {
         case 'chat:error': {
           const key = routeKey(msg);
           if (!key) break;
+          store.setPhase(key, null);
           store.expirePermissions(key);
           const isInterrupt = msg.error.includes('interrupted') || msg.error.includes('Interrupted');
           const sysMsg: ChatMessage = isInterrupt

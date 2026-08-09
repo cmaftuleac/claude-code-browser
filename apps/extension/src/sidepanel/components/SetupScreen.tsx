@@ -115,7 +115,7 @@ function ManualUpdateScreen({ info }: { info: ManualUpdateInfo }) {
 
 /** First-run setup: install the bridge for the first time. */
 function GenericSetupScreen() {
-  // No ID needed — installer auto-detects all loaded Fineguide Tesseract
+  // No ID needed — installer auto-detects all loaded Claude Code Browser
   // extensions and registers them all in allowed_origins.
   const installCmd = 'npx claude-code-browser install';
 

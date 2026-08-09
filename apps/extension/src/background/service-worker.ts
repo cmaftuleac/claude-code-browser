@@ -52,6 +52,9 @@ function connectNativeForPair(pair: PanelPair) {
   try {
     np = chrome.runtime.connectNative(HOST_NAME);
   } catch (e) {
+    // Log as well as forward: the panel only renders "not connected", so without
+    // this the actual reason is invisible in the service-worker console.
+    console.error(`[ccb] connectNative(${HOST_NAME}) threw:`, e);
     deliverToPanel(pair, { type: '_native_status', connected: false, error: String(e) });
     return;
   }
@@ -76,6 +79,9 @@ function connectNativeForPair(pair: PanelPair) {
 
   np.onDisconnect.addListener(() => {
     const error = chrome.runtime.lastError?.message ?? 'disconnected';
+    // Same reason as above — this is the ONLY place the real cause ("host not
+    // found", "forbidden", "host has exited") is ever observable.
+    console.error(`[ccb] native host disconnected (tab ${pair.tabId}):`, error);
     pair.nativePort = null;
     pair.lastConnectionReady = null;
     deliverToPanel(pair, { type: '_native_status', connected: false, error });

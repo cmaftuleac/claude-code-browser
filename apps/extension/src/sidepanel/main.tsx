@@ -2,7 +2,12 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { hydrateRunMode } from './stores/chat-store';
 import './styles.css';
+
+// Restore the picker's last selection before the first render, so a deliberate
+// "Ask before edits" doesn't come back as bypassPermissions after a panel reload.
+hydrateRunMode();
 
 // Prevent the side panel from being navigated away
 document.addEventListener('click', (e) => {

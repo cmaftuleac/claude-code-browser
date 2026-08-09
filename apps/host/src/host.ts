@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Fineguide Tesseract — Chrome Native Messaging Host.
+ * Claude Code Browser — Chrome Native Messaging Host.
  * Minimal startup — heavy imports are lazy-loaded on first use.
  */
 
@@ -12,7 +12,7 @@ import { homedir, platform } from 'node:os';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { resolveProjectDir } from './project-dir.js';
-import type { ClientMessage, ServerMessage } from '@fineguide-tesseract/shared';
+import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 
 // Prevent crashes
 process.on('uncaughtException', (err) => { log('Uncaught exception:', err.message, err.stack ?? ''); });
@@ -75,16 +75,20 @@ function checkPendingSources() {
 
 // ── Slash Command Scanner ─────────────────────────────────────────────────
 
-function scanSlashCommands(): Array<{ name: string; description: string; hint?: string }> {
+/** Scan the user's + the project's skills/commands folders.
+ *
+ *  `projectDir` must be passed explicitly: this host is spawned by Chrome, so
+ *  process.cwd() is whatever directory Chrome happened to have (typically `/`) and
+ *  never the session's project — scanning it meant project-local `.claude/commands`
+ *  were silently never found. Falls back to the configured project dir. */
+function scanSlashCommands(projectDir?: string): Array<{ name: string; description: string; hint?: string }> {
   const commands: Array<{ name: string; description: string; hint?: string }> = [];
   const seen = new Set<string>();
 
-  // Scan directories: ~/.claude/skills/, ~/.claude/commands/, .claude/skills/, .claude/commands/
   const dirs = [
     join(homedir(), '.claude', 'skills'),
     join(homedir(), '.claude', 'commands'),
-    join(process.cwd(), '.claude', 'skills'),
-    join(process.cwd(), '.claude', 'commands'),
+    ...(projectDir ? [join(projectDir, '.claude', 'skills'), join(projectDir, '.claude', 'commands')] : []),
   ];
 
   for (const dir of dirs) {
@@ -172,6 +176,23 @@ async function getAgentManager() {
     );
   }
   return agentManager;
+}
+
+/** Ask the running CLI which models it offers and push them to the panel. Needs a
+ *  resident session (the list comes off a live Query), so callers fire this after
+ *  creating/warming one; a no-op until then.
+ *
+ *  Cached rather than sent once: the host outlives panel reloads, and a panel that
+ *  reconnects has an empty model list. Without a re-send it would fall back to the
+ *  bundled table for the rest of the host's life and could offer a model this CLI
+ *  doesn't have. `resetModelsPushed` is called when a panel (re)connects. */
+let cachedModels: { id: string; label: string }[] | null = null;
+async function pushSupportedModels(am: Awaited<ReturnType<typeof getAgentManager>>): Promise<void> {
+  if (cachedModels) return;   // already known; health:check re-sends it to new panels
+  const models = await am.getSupportedModels().catch(() => null);
+  if (!models || models.length === 0) return;
+  cachedModels = models;
+  send({ type: 'agent:models', models });
 }
 
 async function getSessionStore() {
@@ -320,10 +341,23 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
         claudeCodeInstalled: true,
         claudeAuthenticated: true,
       });
+      // A panel asking for health has just (re)connected, and a reloaded panel starts
+      // with an empty model list. Re-send what we already know so its picker doesn't
+      // spend the rest of the host's life on the bundled fallback table.
+      if (cachedModels) send({ type: 'agent:models', models: cachedModels });
+      // Re-announce turns that are still running. The panel cleared its own running
+      // flags when the port dropped, but the service worker kept us alive and those
+      // turns never stopped — without this they'd stream on with no spinner and no
+      // way to Stop them.
+      if (agentManager) {
+        for (const sessionId of agentManager.getRunningSessionIds()) {
+          send({ type: 'agent:status', sessionId, status: 'running' });
+        }
+      }
       break;
 
     case 'commands:list':
-      send({ type: 'commands:list', commands: scanSlashCommands() });
+      send({ type: 'commands:list', commands: scanSlashCommands(resolveProjectDir(msg.origin, msg.projectDir)) });
       break;
 
     case 'chat:send': {
@@ -346,10 +380,23 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
         sources: msg.sources,
         // Per-conversation run mode from the side panel's picker. The host has no
         // settings layer, so these (or the orchestrator default) are authoritative.
+        // effort / ultracode / unattended are forwarded VERBATIM (including '' and
+        // false) rather than truthiness-spread: a resident session needs to be told
+        // to turn these back OFF too, and '' is the picker's meaningful "Default".
         ...(msg.permissionMode ? { permissionMode: msg.permissionMode } : {}),
-        ...(msg.effort ? { effort: msg.effort } : {}),
-        ...(msg.model ? { model: msg.model } : {}),
-      }).catch((err) => log('sendMessage error:', err instanceof Error ? err.message : String(err)));
+        // `model` belongs with them: '' is the picker's "Default" rung, and the
+        // reconcile is written to CLEAR a pinned model on '' — truthiness-spreading it
+        // here meant undefined arrived instead and unpinning silently never worked.
+        model: msg.model,
+        effort: msg.effort,
+        ultracode: msg.ultracode,
+        unattended: msg.unattended,
+      })
+        // Only once sendMessage RESOLVES is a session actually registered, so chain
+        // the model read off it — firing immediately would race the spawn and find
+        // no live Query to ask.
+        .then(() => pushSupportedModels(am))
+        .catch((err) => log('sendMessage error:', err instanceof Error ? err.message : String(err)));
       break;
     }
 
@@ -371,21 +418,53 @@ async function handleMessage(msg: ClientMessage): Promise<void> {
       const ss = await getSessionStore();
       const messages = await ss.getSessionMessages(msg.sessionId).catch(() => []);
       send({ type: 'session:messages', sessionId: msg.sessionId, messages });
+      // The user just opened this conversation and will very likely type into it.
+      // Pre-warm it in the background so the first message doesn't pay for the CLI
+      // spawn + initialize + transcript reload. Needs a project folder to use as
+      // cwd; skip the warm (not the resume) when the origin doesn't resolve.
+      const dir = resolveProjectDir(msg.origin, msg.projectDir);
+      if (dir) {
+        const am = await getAgentManager();
+        // Chain the model read off the warm: fired now it would find no resident
+        // Query (the warm registers only once startup() resolves) and no-op.
+        // The tab URL rides along: systemPrompt is baked at query() creation and the
+        // resident session is reused for every later send, so warming with url:'' left
+        // resumed conversations permanently unable to see which page the user is on.
+        void am.warmSession({ sessionId: msg.sessionId, message: '', url: msg.url ?? '', projectDir: dir })
+          .then(() => pushSupportedModels(am))
+          .catch((err) => log('warmSession error:', err instanceof Error ? err.message : String(err)));
+      }
       break;
     }
 
     case 'agent:interrupt': {
       const am = await getAgentManager();
-      const stopped = am.interruptSession(msg.sessionId ?? '');
+      const stopped = am.interruptSession(msg.sessionId ?? '', msg.clientRequestId);
       if (stopped) {
-        send({ type: 'agent:status', sessionId: msg.sessionId ?? '', status: 'idle' });
+        // Echo the correlation id back too: a brand-new chat is stopped by
+        // clientRequestId (its sessionId is still ''), and the panel routes on
+        // sessionId-then-clientRequestId — without it this confirmation matches no
+        // bucket and is silently discarded.
+        send({
+          type: 'agent:status',
+          sessionId: msg.sessionId ?? '',
+          ...(msg.clientRequestId ? { clientRequestId: msg.clientRequestId } : {}),
+          status: 'idle',
+        });
       }
       break;
     }
 
     case 'agent:set_mode': {
       const am = await getAgentManager();
-      void am.setRunMode(msg.sessionId, { permissionMode: msg.permissionMode, model: msg.model });
+      void am.setRunMode(msg.sessionId, {
+        permissionMode: msg.permissionMode,
+        model: msg.model,
+        effort: msg.effort,
+        ultracode: msg.ultracode,
+        unattended: msg.unattended,
+        clientRequestId: msg.clientRequestId,
+      });
       break;
     }
 

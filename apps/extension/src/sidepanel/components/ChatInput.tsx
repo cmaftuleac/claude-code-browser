@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 
 // Mirrors Claude Code's terminal "thinking" indicator: 6 base glyphs played as
 // a palindrome (forward then reversed) so the animation eases at the ends
@@ -7,8 +7,9 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 const SPINNER_BASE = ['·', '✢', '✳', '✶', '✻', '✽'];
 const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
 const SPINNER_INTERVAL_MS = 120;
-import type { ClientMessage, ElementAnchor } from '@fineguide-tesseract/shared';
-import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
+import type { ClientMessage, ElementAnchor, AttachedFile } from '@claude-code-browser/shared';
+import { useChatStore, selectActiveIsRunning, selectActiveRunMode } from '../stores/chat-store';
+import { useConnectionStore } from '../stores/connection-store';
 import { MY_TAB_ID } from '../tab';
 import { useElementPicker } from '../hooks/useElementPicker';
 import { SlashCommandMenu } from './SlashCommandMenu';
@@ -30,22 +31,39 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export function ChatInput({ send }: Props) {
   const [images, setImages] = useState<string[]>([]);
+  // Non-image attachments. Images keep their own channel because the model takes
+  // them inline as vision input; everything else the host writes to a temp dir and
+  // references by path, so the agent Reads it as a file.
+  const [files, setFiles] = useState<AttachedFile[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState('');
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  /** Command names the running CLI reports (agent:capabilities) — no descriptions. */
+  const [cliCommands, setCliCommands] = useState<string[]>([]);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { activatePicker } = useElementPicker();
   const sourcePaths = useSourcePaths();
+  const targetTabUrl = useConnectionStore((s) => s.targetTabUrl);
+  // Primitive projections of the project context, so effects can depend on the VALUE
+  // rather than on a `sourcePaths` array that is reallocated on every tab change.
+  // `origin` matters as much as the folder: with no source configured (the default)
+  // the host resolves the per-website folder from the origin alone, and with neither
+  // it can only reach the user-global ~/.claude commands.
+  const sourceKey = sourcePaths[0] ?? '';
+  const originKey = useMemo(() => {
+    try { return new URL(targetTabUrl).host; } catch { return ''; }
+  }, [targetTabUrl]);
 
   const pendingAnchors = useChatStore((s) => s.pendingAnchors);
-  const runMode = useChatStore((s) => s.runMode);
+  const runMode = useChatStore(selectActiveRunMode);
   const clearAnchors = useChatStore((s) => s.clearAnchors);
   const addUserMessage = useChatStore((s) => s.addUserMessage);
   const activeView = useChatStore((s) => s.activeView);
   const isAgentRunning = useChatStore(selectActiveIsRunning);
   const setSessionRunning = useChatStore((s) => s.setSessionRunning);
   const newChat = useChatStore((s) => s.newChat);
+  const adoptRunMode = useChatStore((s) => s.adoptRunMode);
 
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   useEffect(() => {
@@ -58,13 +76,36 @@ export function ChatInput({ send }: Props) {
 
   const placeholder = 'Ask about this page...';
 
-  // Load slash commands from host
+  // Slash commands come from two sources: the host's filesystem scan (names +
+  // descriptions + arg hints) and the running CLI's own list (authoritative, covers
+  // built-ins and plugin commands the scan can't see, but name-only). Keep them apart
+  // and merge for display so neither loses what the other has.
+  // Re-requested whenever the project folder changes — the scan covers that folder's
+  // .claude/commands, so the menu would otherwise only ever show the user-global ones.
   useEffect(() => {
-    send({ type: 'commands:list' } as ClientMessage);
-    const handler = (e: Event) => setSlashCommands((e as CustomEvent).detail);
-    window.addEventListener('ccb:commands', handler);
-    return () => window.removeEventListener('ccb:commands', handler);
-  }, [send]);
+    send({ type: 'commands:list', origin: originKey || undefined, projectDir: sourceKey || undefined } as ClientMessage);
+    const onScanned = (e: Event) => setSlashCommands((e as CustomEvent).detail);
+    const onCapabilities = (e: Event) => setCliCommands((e as CustomEvent).detail as string[]);
+    window.addEventListener('ccb:commands', onScanned);
+    window.addEventListener('ccb:capabilities', onCapabilities);
+    return () => {
+      window.removeEventListener('ccb:commands', onScanned);
+      window.removeEventListener('ccb:capabilities', onCapabilities);
+    };
+    // Keyed on primitives, NOT on `sourcePaths`/`targetTabUrl` directly: useSourcePaths
+    // returns a fresh array on any browser-tab change, which would re-fire commands:list
+    // constantly — and the host answers it with a fully synchronous directory scan on
+    // the same thread that pumps streamed tokens.
+  }, [send, sourceKey, originKey]);
+
+  const allCommands = useMemo<SlashCommand[]>(() => {
+    const byName = new Map(slashCommands.map((c) => [c.name, c]));
+    for (const name of cliCommands) {
+      const key = `/${name}`;
+      if (!byName.has(key)) byName.set(key, { name: key, description: '' });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [slashCommands, cliCommands]);
 
   // Insert chip at cursor when new anchor arrives
   const lastAnchorCountRef = useRef(0);
@@ -137,10 +178,11 @@ export function ChatInput({ send }: Props) {
 
   const handleSend = useCallback(() => {
     const message = getEditorText();
-    if (!message && pendingAnchors.length === 0 && images.length === 0) return;
+    if (!message && pendingAnchors.length === 0 && images.length === 0 && files.length === 0) return;
 
     const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
     const imgs = images.length > 0 ? [...images] : undefined;
+    const docs = files.length > 0 ? [...files] : undefined;
 
     // Resolve which bucket the message + running flag belong to. For empty/pending,
     // we send no sessionId and let the host create one; clientRequestId correlates
@@ -158,6 +200,11 @@ export function ChatInput({ send }: Props) {
       clientRequestId = newChat();
       runningKey = clientRequestId;
     }
+    // Pin the mode this turn is being sent with onto the conversation, so it stops
+    // tracking the shared default: a chat that inherited "Ask" must not silently
+    // change when the user later re-aims the default for new chats. No-op if this
+    // conversation already has its own.
+    adoptRunMode(runningKey, runMode);
 
     addUserMessage(message, anchors, imgs);
     const tid = MY_TAB_ID;
@@ -174,6 +221,7 @@ export function ChatInput({ send }: Props) {
         message,
         anchors,
         images: imgs,
+        files: docs,
         url,
         origin: origin || undefined,
         projectDir: sourcePaths[0],
@@ -182,6 +230,10 @@ export function ChatInput({ send }: Props) {
         permissionMode: runMode.permissionMode,
         effort: runMode.effort,
         model: runMode.model,
+        // Sent even when false: the host reconciles a resident/pre-warmed session
+        // from this payload, so omitting `false` would leave it stuck on.
+        ultracode: runMode.ultracode,
+        unattended: runMode.unattended,
       });
     };
     if (tid) {
@@ -193,16 +245,22 @@ export function ChatInput({ send }: Props) {
 
     clearAnchors();
     setImages([]);
+    setFiles([]);
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
     setShowSlashMenu(false);
-  }, [pendingAnchors, images, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat, runMode]);
+  }, [pendingAnchors, images, files, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat, adoptRunMode, runMode]);
 
   const handleStop = useCallback(() => {
-    // Send interrupt for active session. Empty string falls back to the host's
-    // pending-session interrupt path for new chats whose sessionId isn't resolved yet.
+    // A new chat has no sessionId yet, so send its clientRequestId: the host's
+    // pending-session path used to stop whichever pending chat came first, which with
+    // two new chats in flight meant Stop killed the wrong one.
     const sid = activeView.kind === 'session' ? activeView.sessionId : '';
-    send({ type: 'agent:interrupt', sessionId: sid });
+    send({
+      type: 'agent:interrupt',
+      sessionId: sid,
+      ...(activeView.kind === 'pending' ? { clientRequestId: activeView.clientRequestId } : {}),
+    });
     // Immediately mark the active bucket idle — host will confirm with chat:error
     if (activeView.kind === 'session') setSessionRunning(activeView.sessionId, false);
     else if (activeView.kind === 'pending') setSessionRunning(activeView.clientRequestId, false);
@@ -218,7 +276,7 @@ export function ChatInput({ send }: Props) {
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault();
       const st = useChatStore.getState();
-      st.setRunMode({ permissionMode: nextPermissionMode(st.runMode.permissionMode) });
+      st.setRunMode({ permissionMode: nextPermissionMode(selectActiveRunMode(st).permissionMode) });
     }
   };
 
@@ -248,6 +306,19 @@ export function ChatInput({ send }: Props) {
     editorRef.current?.focus();
   };
 
+  /** Split a dropped/picked/pasted batch: images inline, everything else by path. */
+  const addAttachments = async (list: File[]) => {
+    const imgs: string[] = [];
+    const docs: AttachedFile[] = [];
+    for (const f of list) {
+      const dataUrl = await readFileAsDataUrl(f);
+      if (f.type.startsWith('image/')) imgs.push(dataUrl);
+      else docs.push({ name: f.name, dataUrl });
+    }
+    if (imgs.length) setImages((prev) => [...prev, ...imgs]);
+    if (docs.length) setFiles((prev) => [...prev, ...docs]);
+  };
+
   const handlePaste = async (e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData.items);
     const imageItems = items.filter((item) => item.type.startsWith('image/'));
@@ -268,17 +339,11 @@ export function ChatInput({ send }: Props) {
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
-    const newImages: string[] = [];
-    for (const file of files) newImages.push(await readFileAsDataUrl(file));
-    setImages((prev) => [...prev, ...newImages]);
+    await addAttachments(Array.from(e.dataTransfer.files));
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'));
-    const newImages: string[] = [];
-    for (const file of files) newImages.push(await readFileAsDataUrl(file));
-    setImages((prev) => [...prev, ...newImages]);
+    await addAttachments(Array.from(e.target.files ?? []));
     e.target.value = '';
   };
 
@@ -291,13 +356,27 @@ export function ChatInput({ send }: Props) {
       )}
       {showSlashMenu && (
         <SlashCommandMenu
-          commands={slashCommands}
+          commands={allCommands}
           filter={slashFilter}
           onSelect={handleSlashSelect}
           onClose={() => setShowSlashMenu(false)}
         />
       )}
 
+      {files.length > 0 && (
+        <div className="chat-input__files">
+          {files.map((f, i) => (
+            <div key={`${f.name}-${i}`} className="chat-input__file" title={f.name}>
+              <span className="chat-input__file-name">{f.name}</span>
+              <button
+                className="chat-input__file-remove"
+                aria-label={`Remove ${f.name}`}
+                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
       {images.length > 0 && (
         <div className="chat-input__images">
           {images.map((src, i) => (
@@ -347,7 +426,7 @@ export function ChatInput({ send }: Props) {
         </div>
       </div>
 
-      <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileUpload} />
+      <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={handleFileUpload} />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
-import type { ClientMessage } from '@fineguide-tesseract/shared';
+import type { ClientMessage } from '@claude-code-browser/shared';
 import { useChatStore, buildSessionEntries } from '../stores/chat-store';
 import { useConnectionStore } from '../stores/connection-store';
+import { useSourcePaths } from './SourcesPanel';
 import { MY_TAB_ID } from '../tab';
 
 interface Props {
@@ -23,6 +24,7 @@ export function SessionList({ send }: Props) {
   const selectPending = useChatStore((s) => s.selectPending);
 
   const targetTabUrl = useConnectionStore((s) => s.targetTabUrl);
+  const sourcePaths = useSourcePaths();
   let origin = '';
   try { origin = new URL(targetTabUrl).host; } catch { /* no pinned http(s) tab */ }
 
@@ -39,7 +41,20 @@ export function SessionList({ send }: Props) {
     if (MY_TAB_ID != null) chrome.storage.local.set({ [ownerKey(id)]: MY_TAB_ID });
     setBlockedId(null);
     const needsResume = selectSession(id);
-    if (needsResume) send({ type: 'session:resume', sessionId: id });
+    // origin + projectDir let the host resolve the cwd and pre-warm this session,
+    // so the first message into it doesn't wait on a cold CLI spawn. `url` rides
+    // along because the pre-warm bakes the system prompt — including which page the
+    // user is on — at spawn time, and the warmed session is then reused for every
+    // later turn; without it a resumed conversation can never see the tab.
+    if (needsResume) {
+      send({
+        type: 'session:resume',
+        sessionId: id,
+        origin: origin || undefined,
+        projectDir: sourcePaths[0],
+        url: targetTabUrl || undefined,
+      });
+    }
   };
 
   const handleResumeSession = (id: string) => {

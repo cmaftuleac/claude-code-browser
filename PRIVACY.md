@@ -1,14 +1,14 @@
-# Privacy Policy — Fineguide Tesseract
+# Privacy Policy — Claude Code Browser
 
 **Last updated:** March 30, 2026
 
 ## Overview
 
-Fineguide Tesseract is an open-source Chrome extension that connects your browser to Claude Code for visual web debugging. This privacy policy explains what data the extension accesses and how it is handled.
+Claude Code Browser is an open-source Chrome extension that connects your browser to Claude Code for visual web debugging. This privacy policy explains what data the extension accesses and how it is handled.
 
 ## Data Collection
 
-**Fineguide Tesseract does not collect, store, or transmit any personal data to external servers.**
+**Claude Code Browser does not collect, store, or transmit any personal data to external servers.**
 
 ## What the Extension Accesses
 
@@ -70,7 +70,7 @@ For questions about this privacy policy, open an issue on GitHub or contact:
 
 ## Chrome Web Store API Use Policy Compliance
 
-Fineguide Tesseract's use and transfer to any other app of information received from Chrome APIs adheres to the [Chrome Web Store API Use Policy](https://developer.chrome.com/docs/webstore/program-policies/), including the Limited Use requirements.
+Claude Code Browser's use and transfer to any other app of information received from Chrome APIs adheres to the [Chrome Web Store API Use Policy](https://developer.chrome.com/docs/webstore/program-policies/), including the Limited Use requirements.
 
 ## Changes
 

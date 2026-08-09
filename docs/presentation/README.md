@@ -1,4 +1,4 @@
-# Prezentare: Fineguide Tesseract — proiect de weekend
+# Prezentare: Claude Code Browser — proiect de weekend
 
 Materiale pentru o prezentare de **10–15 minute**, susținută **în limba română**. Folosește fișierele `.ro.md`; versiunile în engleză sunt păstrate ca referință (structura veche, 14 slide-uri).
 

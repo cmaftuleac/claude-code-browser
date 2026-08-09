@@ -24,7 +24,7 @@
     "dev:host": "npm run dev -w apps/host",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"
   },
   "devDependencies": {
