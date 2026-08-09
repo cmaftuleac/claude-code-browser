@@ -41,8 +41,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
           cache: npm
+          # NO registry-url. It makes setup-node write an .npmrc containing
+          #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          # which, with no token in the environment, resolves to an EMPTY token that
+          # is still sent — shadowing the OIDC credential and failing the publish with
+          # a misleading `E404 PUT` (npm reports unauthorized as 404). The default
+          # registry is registry.npmjs.org anyway, so this option buys nothing here.
 
       - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
         # Node 22 bundles npm 10.x, which has no OIDC support and would fall back to
