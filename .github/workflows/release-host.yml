@@ -6,8 +6,10 @@ name: Release host to npm
 # The tag MUST match apps/host/package.json:version; the job fails fast otherwise,
 # because npm versions are immutable and a wrong publish cannot be undone.
 #
-# Requires a repository secret `NPM_TOKEN` — an npm **automation** (or granular)
-# token. A classic publish token trips npm's 2FA (EOTP) in CI and the job will fail.
+# Auth is npm **trusted publishing** (OIDC) — no NPM_TOKEN secret. The package must
+# list this repo + this workflow file as a trusted publisher on npmjs.com; npm then
+# mints a short-lived credential from the `id-token` below, and provenance is
+# attached automatically. Nothing secret ever lives in the repo.
 on:
   push:
     tags:
@@ -29,8 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # Required for npm provenance (the package is public, so this attaches a
-      # verifiable link from the tarball back to this workflow run).
+      # Load-bearing: this is the credential. Trusted publishing exchanges this
+      # OIDC token for a short-lived npm publish grant, and it also backs provenance.
       id-token: write
 
     steps:
@@ -41,6 +43,14 @@ jobs:
           node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+
+      - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
+        # Node 22 bundles npm 10.x, which has no OIDC support and would fall back to
+        # looking for a token that does not exist. Pin the major so a future npm
+        # cannot change publish behaviour under us without a deliberate bump.
+        run: |
+          npm install -g npm@^12
+          npm -v
 
       - name: Install workspace
         run: npm ci
@@ -86,9 +96,11 @@ jobs:
 
       - name: Publish to npm
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        # No NODE_AUTH_TOKEN: an empty/absent token env would shadow OIDC and fail
+        # with ENEEDAUTH. Provenance is implied by trusted publishing but stated
+        # explicitly so a config regression fails loudly instead of silently
+        # publishing an unattested tarball.
         run: npm publish -w apps/host --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Dry run — skipped publish
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
