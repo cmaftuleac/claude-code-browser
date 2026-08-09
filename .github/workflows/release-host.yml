@@ -1,0 +1,106 @@
+name: Release host to npm
+
+# Publishes apps/host (the `claude-code-browser` npm package).
+#
+# Normal path: push a version tag — `git tag v0.1.20 && git push origin v0.1.20`.
+# The tag MUST match apps/host/package.json:version; the job fails fast otherwise,
+# because npm versions are immutable and a wrong publish cannot be undone.
+#
+# Requires a repository secret `NPM_TOKEN` — an npm **automation** (or granular)
+# token. A classic publish token trips npm's 2FA (EOTP) in CI and the job will fail.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and pack, but do not publish'
+        type: boolean
+        default: true
+
+concurrency:
+  # One release at a time; never cancel a publish midway.
+  group: release-host
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm provenance (the package is public, so this attaches a
+      # verifiable link from the tarball back to this workflow run).
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Install workspace
+        run: npm ci
+
+      - name: Build all workspaces
+        # Builds packages/shared first (turbo dependsOn ^build) — apps/host's tsc
+        # resolves the shared types through its built dist, so order matters.
+        run: npm run build
+
+      - name: Resolve version
+        id: v
+        run: |
+          VERSION=$(node -p "require('./apps/host/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="${{ steps.v.outputs.version }}"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match apps/host/package.json version $PKG."
+            echo "::error::Retag, or bump the package — an npm version cannot be republished."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package version $PKG."
+
+      - name: Check the version is not already published
+        run: |
+          PKG="${{ steps.v.outputs.version }}"
+          if npm view "claude-code-browser@$PKG" version >/dev/null 2>&1; then
+            echo "::error::claude-code-browser@$PKG is already on npm. Versions are immutable — bump and retag."
+            exit 1
+          fi
+          echo "claude-code-browser@$PKG is not published yet."
+
+      - name: Pack (inspect contents)
+        run: |
+          npm pack -w apps/host --pack-destination /tmp
+          echo "--- tarball contents ---"
+          tar -tzf /tmp/claude-code-browser-${{ steps.v.outputs.version }}.tgz | head -40
+
+      - name: Publish to npm
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        run: npm publish -w apps/host --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Dry run — skipped publish
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+        run: echo "Dry run: built and packed v${{ steps.v.outputs.version }}, publish skipped."
+
+      - name: Summary
+        run: |
+          {
+            echo "### claude-code-browser v${{ steps.v.outputs.version }}"
+            if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.dry_run }}" = "false" ]; then
+              echo "Published to npm."
+            else
+              echo "Dry run — nothing published."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
