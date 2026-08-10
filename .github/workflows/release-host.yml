@@ -85,13 +85,21 @@ jobs:
           echo "Tag $GITHUB_REF_NAME matches package version $PKG."
 
       - name: Check the version is not already published
+        # Fatal for a real release (npm versions are immutable), but only a warning
+        # on a dry run — a dry run publishes nothing, so refusing to validate the
+        # build just because the version exists makes the dry run useless.
         run: |
           PKG="${{ steps.v.outputs.version }}"
           if npm view "claude-code-browser@$PKG" version >/dev/null 2>&1; then
-            echo "::error::claude-code-browser@$PKG is already on npm. Versions are immutable — bump and retag."
-            exit 1
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+              echo "::warning::claude-code-browser@$PKG is already published — fine for a dry run, fatal for a release."
+            else
+              echo "::error::claude-code-browser@$PKG is already on npm. Versions are immutable — bump and retag."
+              exit 1
+            fi
+          else
+            echo "claude-code-browser@$PKG is not published yet."
           fi
-          echo "claude-code-browser@$PKG is not published yet."
 
       - name: Pack (inspect contents)
         run: |
