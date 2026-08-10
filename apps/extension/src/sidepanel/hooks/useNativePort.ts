@@ -212,7 +212,11 @@ export function useNativePort() {
                   id: `hist-${msg.sessionId}-${i}-${j}`,
                   role: 'assistant',
                   content: block.content,
-                  timestamp: m.timestamp ?? Date.now(),
+                  // 0, NOT Date.now(): a missing timestamp means an older emitter
+                  // wrote this entry, i.e. it is OLD. Substituting "now" pushed the
+                  // resume watermark (loadSessionHistory) to load time, so nothing
+                  // live was ever newer and a turn that finished mid-resume was lost.
+                  timestamp: m.timestamp ?? 0,
                   kind: block.kind,
                 });
               }
@@ -221,7 +225,7 @@ export function useNativePort() {
                 id: `hist-${msg.sessionId}-${i}`,
                 role: m.role as 'user' | 'assistant',
                 content: m.content,
-                timestamp: m.timestamp ?? Date.now(),
+                timestamp: m.timestamp ?? 0,   // see above
               });
             }
           }

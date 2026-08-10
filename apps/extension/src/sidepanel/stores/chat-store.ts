@@ -299,15 +299,36 @@ let defaultRunModeTouched = false;
  *  other site's saved modes on the next save — the same "safety setting silently
  *  reverts to bypassPermissions" regression this persistence exists to prevent.
  *  Read-modify-write instead, trimmed to a cap so it can't grow without bound. */
-function persistSessionRunModes(runModes: Record<string, RunMode>): void {
-  try {
-    chrome.storage.local.get(SESSION_MODES_KEY, (res) => {
-      const stored = (res?.[SESSION_MODES_KEY] ?? {}) as Record<string, RunMode>;
-      const merged = { ...stored, ...runModes };
-      const entries = Object.entries(merged).slice(-SESSION_MODES_CAP);
-      try { chrome.storage.local.set({ [SESSION_MODES_KEY]: Object.fromEntries(entries) }); } catch { /* storage unavailable */ }
-    });
-  } catch { /* storage unavailable */ }
+/** Serializes the read-modify-write below. It has three callers (picker edits,
+ *  agent-initiated mode changes, and the pending→session migration) and chrome.storage
+ *  is async, so concurrent get→merge→set rounds would interleave: the last `set` wins
+ *  with a snapshot taken before its neighbour's write, dropping that change. A chat's
+ *  mode silently reverting to bypassPermissions is the exact failure this persistence
+ *  exists to prevent, so the writes are chained instead of racing. */
+let sessionModesWrite: Promise<void> = Promise.resolve();
+
+function persistSessionRunModes(runModes: Record<string, RunMode>, remove: string[] = []): void {
+  sessionModesWrite = sessionModesWrite.then(() => new Promise<void>((done) => {
+    // The chain must ALWAYS settle. A link that never resolves stalls every later
+    // write for the life of the panel — turning "modes are persisted" back into
+    // "modes silently revert to bypassPermissions", the regression this prevents.
+    // So: settle exactly once, guard the callback bodies (not just the call), and
+    // keep a timeout in case a callback never fires at all.
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; clearTimeout(timer); done(); } };
+    const timer = setTimeout(finish, 5000);
+    try {
+      chrome.storage.local.get(SESSION_MODES_KEY, (res) => {
+        try {
+          const stored = (res?.[SESSION_MODES_KEY] ?? {}) as Record<string, RunMode>;
+          const merged = { ...stored, ...runModes };
+          for (const key of remove) delete merged[key];
+          const entries = Object.entries(merged).slice(-SESSION_MODES_CAP);
+          chrome.storage.local.set({ [SESSION_MODES_KEY]: Object.fromEntries(entries) }, finish);
+        } catch { finish(); }
+      });
+    } catch { finish(); }
+  }));
 }
 
 /** Load the persisted run modes into the store. Called once at panel startup; unknown
@@ -353,12 +374,6 @@ function withBucket(
     sessionStates: { ...state.sessionStates, [key]: fn(prev) },
     pendingNewChats: state.pendingNewChats,
   };
-}
-
-function activeKey(view: ActiveView): string | null {
-  if (view.kind === 'session') return view.sessionId;
-  if (view.kind === 'pending') return view.clientRequestId;
-  return null;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -650,9 +665,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // a chat started in Plan mode would silently revert to the default the moment
       // its session id resolved.
       const { [clientRequestId]: pendingMode, ...restModes } = state.runModes;
-      const runModes = pendingMode
-        ? { ...restModes, [sessionId]: state.runModes[sessionId] ?? pendingMode }
-        : state.runModes;
+      let runModes = state.runModes;
+      if (pendingMode) {
+        const adopted = state.runModes[sessionId] ?? pendingMode;
+        runModes = { ...restModes, [sessionId]: adopted };
+        // Persist under the NEW key and drop the old one. Moving it only in memory
+        // meant a chat deliberately set to Plan / "Ask before edits" came back as the
+        // default (bypassPermissions) after a panel reload, and the dead
+        // clientRequestId entry sat in storage forever eating a slot in the cap.
+        persistSessionRunModes({ [sessionId]: adopted }, [clientRequestId]);
+      }
       return {
         ...state,
         sessionStates: { ...state.sessionStates, [sessionId]: merged },
@@ -665,7 +687,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   addUserMessage: (content, anchors, images) => {
     bumpStat('messageCount');
     set((state) => {
-      const key = activeKey(state.activeView);
+      const key = activeViewKey(state.activeView);
       if (!key) {
         // Empty view — auto-mint a pending bucket so the message has a home.
         // ChatInput is expected to call newChat() before submit, but be defensive.

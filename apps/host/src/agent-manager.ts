@@ -1346,7 +1346,18 @@ CRITICAL RULES:
       }
     } catch (err: unknown) {
       const sid = live.sessionId;
-      if (live.interrupted || live.abort.signal.aborted) {
+      // Order matters. `warm` outranks everything: nobody is waiting on a pre-warm the
+      // user only opened, so any way it dies is logged, never painted into that
+      // conversation. Then `reaped` — a forced reap aborts to unblock the session, so
+      // the aborted/interrupted test below would otherwise report our own teardown as
+      // the user having pressed Stop.
+      if (live.warm) {
+        log('Pre-warm session failed (best-effort):', sid, err instanceof Error ? err.message : String(err));
+      } else if (live.reaped) {
+        log('Reaped session ended:', sid, err instanceof Error ? err.message : String(err));
+        emit({ type: 'chat:error', sessionId: sid, error: 'This conversation was closed to free resources. Send again to resume it.' });
+        emit({ type: 'agent:status', sessionId: sid, status: 'idle' });
+      } else if (live.interrupted || live.abort.signal.aborted) {
         live.interrupted = false;
         log('Session interrupted by user (caught from iterator):', sid);
         emit({ type: 'chat:error', sessionId: sid, error: 'Interrupted.' });
@@ -1359,16 +1370,9 @@ CRITICAL RULES:
           ? `${err.name}: ${err.message}${err.stack ? `\n${err.stack}` : ''}`
           : String(err);
         const userFacing = err instanceof Error ? err.message : String(err);
-        if (live.warm) {
-          // A pre-warm that died before the user typed anything. Nobody is waiting on
-          // it, and the next chat:send just spawns a fresh session — so log it rather
-          // than painting an error bubble into a conversation the user only opened.
-          log('Pre-warm session failed (best-effort):', sid, detail);
-        } else {
-          log('Session iterator error:', sid, detail);
-          emit({ type: 'chat:error', sessionId: sid, error: userFacing });
-          emit({ type: 'agent:status', sessionId: sid, status: 'error' });
-        }
+        log('Session iterator error:', sid, detail);
+        emit({ type: 'chat:error', sessionId: sid, error: userFacing });
+        emit({ type: 'agent:status', sessionId: sid, status: 'error' });
       }
     } finally {
       if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
@@ -1440,6 +1444,15 @@ CRITICAL RULES:
     if (live.idleTimer) { clearTimeout(live.idleTimer); live.idleTimer = undefined; }
     this.liveSessions.delete(sessionId);
     live.pump.end();
+    // A forced reap targets a session parked on an approval, and ending the input pump
+    // does NOT free it: the CLI is blocked on a canUseTool promise nobody will resolve,
+    // so the consumer's iterator never returns, its `finally` never runs, and the child
+    // process outlives the map entry — untracked, unreachable, unkillable. Aborting is
+    // what unblocks it: the parked promises listen on this signal and deny themselves,
+    // the iterator ends, and query.close() runs.
+    if (force) {
+      try { live.abort.abort(); } catch { /* already aborted */ }
+    }
   }
 
   reapIdleSessions(maxIdleMs: number): number {
