@@ -1,0 +1,150 @@
+name: Release extension to Chrome Web Store
+
+# Builds apps/extension, uploads the ZIP to the Chrome Web Store, and (optionally)
+# submits it for review.
+#
+# Trigger: push a tag `ext-v<version>` matching apps/extension/manifest.json:version,
+# or run manually. Manual runs default to upload-only (a draft you can inspect in the
+# dashboard before publishing).
+#
+# ─── Ordering, do not skip ────────────────────────────────────────────────────
+# The extension refuses to talk to a host older than MIN_HOST_VERSION and will try to
+# self-update it from npm. So the host MUST be on npm BEFORE this ships, or every
+# user lands on the manual-update screen. Release order is always:
+#   1. tag v<host>      → release-host.yml publishes to npm
+#   2. bump MIN_HOST_VERSION if needed, rebuild
+#   3. tag ext-v<ext>   → this workflow
+#
+# ─── Required secrets ─────────────────────────────────────────────────────────
+# From a Google Cloud project with the Chrome Web Store API enabled, authorised
+# against the account that owns the listing:
+#   CWS_CLIENT_ID, CWS_CLIENT_SECRET, CWS_REFRESH_TOKEN
+# The extension id is public, so it is inlined rather than kept secret.
+on:
+  push:
+    tags:
+      - 'ext-v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Submit for review after uploading (otherwise upload as draft)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-extension
+  cancel-in-progress: false
+
+env:
+  EXTENSION_ID: mnibceaaapcppokpnnljohdlmojjgbkf
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install workspace
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+
+      - name: Resolve version
+        id: v
+        run: |
+          VERSION=$(node -p "require('./apps/extension/manifest.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extension version: $VERSION"
+
+      - name: Verify tag matches manifest version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          TAG="${GITHUB_REF_NAME#ext-v}"
+          PKG="${{ steps.v.outputs.version }}"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest version $PKG."
+            exit 1
+          fi
+
+      - name: Package ZIP
+        run: |
+          cd apps/extension/dist
+          zip -qr "$GITHUB_WORKSPACE/extension.zip" . -x '.*' -x '__MACOSX/*'
+          cd "$GITHUB_WORKSPACE"
+          echo "--- zip contents (first 30) ---"
+          unzip -l extension.zip | head -34
+
+      - name: Upload build artifact
+        # Kept regardless of whether the store step succeeds, so a failed upload
+        # still leaves something you can drag into the dashboard by hand.
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-browser-v${{ steps.v.outputs.version }}
+          path: extension.zip
+          if-no-files-found: error
+
+      - name: Get Chrome Web Store access token
+        id: token
+        run: |
+          RESP=$(curl -sS -X POST https://oauth2.googleapis.com/token \
+            -d client_id="${{ secrets.CWS_CLIENT_ID }}" \
+            -d client_secret="${{ secrets.CWS_CLIENT_SECRET }}" \
+            -d refresh_token="${{ secrets.CWS_REFRESH_TOKEN }}" \
+            -d grant_type=refresh_token)
+          TOKEN=$(echo "$RESP" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).access_token || ''")
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Could not get a Chrome Web Store access token. Check CWS_CLIENT_ID / CWS_CLIENT_SECRET / CWS_REFRESH_TOKEN."
+            # Echo only the error field — the body can carry sensitive values.
+            echo "$RESP" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).error || 'no error field'"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Chrome Web Store
+        run: |
+          RESP=$(curl -sS -X PUT \
+            -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+            -H "x-goog-api-version: 2" \
+            -T extension.zip \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${EXTENSION_ID}")
+          echo "$RESP"
+          STATE=$(echo "$RESP" | node -p "(JSON.parse(require('fs').readFileSync(0,'utf8')).uploadState)||''")
+          if [ "$STATE" != "SUCCESS" ]; then
+            echo "::error::Upload failed (uploadState=$STATE)."
+            exit 1
+          fi
+
+      - name: Submit for review
+        if: ${{ github.event_name == 'push' || inputs.publish == true }}
+        run: |
+          RESP=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${EXTENSION_ID}/publish")
+          echo "$RESP"
+          if echo "$RESP" | grep -q '"error"'; then
+            echo "::error::Publish call returned an error."
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "### Claude Code Browser v${{ steps.v.outputs.version }}"
+            if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.publish }}" = "true" ]; then
+              echo "Uploaded and submitted for review."
+            else
+              echo "Uploaded as a draft — publish from the dashboard when ready."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

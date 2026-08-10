@@ -1879,3 +1879,18 @@ body {
   max-width: 100%; border-radius: 6px; margin: 4px 0;
 }
 .message-bubble__content audio, .message-bubble__tool-detail audio { width: 100%; }
+
+/* Attachment rejection notice (oversize / unreadable file). Sits above the chips so
+   a skipped file is visible rather than silently absent from the outgoing message. */
+.chat-input__attach-error {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 12px 6px; padding: 6px 9px;
+  background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 6px; color: #fca5a5; font-size: 11px; line-height: 1.35;
+  animation: question-in 0.14s ease-out;
+}
+.chat-input__attach-error-x {
+  background: transparent; border: none; color: #fca5a5;
+  font-size: 13px; line-height: 1; cursor: pointer; padding: 0; flex-shrink: 0;
+}
+.chat-input__attach-error-x:hover { color: #fecaca; }

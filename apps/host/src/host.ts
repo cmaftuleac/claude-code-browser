@@ -185,7 +185,7 @@ async function getAgentManager() {
  *  Cached rather than sent once: the host outlives panel reloads, and a panel that
  *  reconnects has an empty model list. Without a re-send it would fall back to the
  *  bundled table for the rest of the host's life and could offer a model this CLI
- *  doesn't have. `resetModelsPushed` is called when a panel (re)connects. */
+ *  doesn't have. The `health:check` a panel sends on connect re-sends the cache. */
 let cachedModels: { id: string; label: string }[] | null = null;
 async function pushSupportedModels(am: Awaited<ReturnType<typeof getAgentManager>>): Promise<void> {
   if (cachedModels) return;   // already known; health:check re-sends it to new panels

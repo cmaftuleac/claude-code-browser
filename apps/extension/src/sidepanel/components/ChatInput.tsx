@@ -21,11 +21,28 @@ interface Props {
   send: (msg: ClientMessage) => void;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
+/** Largest attachment we will inline. The data URL is ~4/3 the file size and rides a
+ *  native-messaging frame, so a big file would be dropped in transit anyway. */
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+/** Read a file as a data URL, or null if it can't be read.
+ *
+ *  The error handlers are load-bearing: a FileReader with only `onload` never settles
+ *  for an unreadable entry — and a dropped FOLDER is exactly that. Since the
+ *  image-only filter was removed, one such drop would hang the awaited loop below and
+ *  silently swallow the whole batch, valid files included. */
+function readFileAsDataUrl(file: File): Promise<string | null> {
+  // An empty file yields `data:…;base64,` with no payload. The host's extractor
+  // requires at least one base64 char and silently drops it, so treat it as
+  // unattachable HERE — otherwise the composer shows a chip for a file that never
+  // arrives, and on the paste path it suppresses the text fallback too.
+  if (file.size === 0 || file.size > MAX_ATTACHMENT_BYTES) return Promise.resolve(null);
   return new Promise((resolve) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.readAsDataURL(file);
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.onabort = () => resolve(null);
+    try { reader.readAsDataURL(file); } catch { resolve(null); }
   });
 }
 
@@ -40,6 +57,8 @@ export function ChatInput({ send }: Props) {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
   /** Command names the running CLI reports (agent:capabilities) — no descriptions. */
   const [cliCommands, setCliCommands] = useState<string[]>([]);
+  /** Why the last drop/paste/pick didn't attach something, or null. */
+  const [attachError, setAttachError] = useState<string | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { activatePicker } = useElementPicker();
@@ -106,6 +125,10 @@ export function ChatInput({ send }: Props) {
     }
     return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [slashCommands, cliCommands]);
+
+  // The banner describes the last drop/paste into THIS composer, so a conversation
+  // switch retires it — ChatInput isn't remounted, so it would otherwise persist.
+  useEffect(() => { setAttachError(null); }, [activeView]);
 
   // Insert chip at cursor when new anchor arrives
   const lastAnchorCountRef = useRef(0);
@@ -245,6 +268,7 @@ export function ChatInput({ send }: Props) {
 
     clearAnchors();
     setImages([]);
+    setAttachError(null);
     setFiles([]);
     lastAnchorCountRef.current = 0;
     if (editorRef.current) editorRef.current.innerHTML = '';
@@ -307,33 +331,43 @@ export function ChatInput({ send }: Props) {
   };
 
   /** Split a dropped/picked/pasted batch: images inline, everything else by path. */
-  const addAttachments = async (list: File[]) => {
+  /** Returns how many files were actually attached, so the paste path can fall back
+   *  to inserting text when a paste turned out to carry nothing usable. */
+  const addAttachments = async (list: File[]): Promise<number> => {
+    if (list.length === 0) return 0;
+    // Read concurrently — these are independent, and serializing them made a 20-file
+    // drop take 20x one read before the first chip appeared.
+    const read = await Promise.all(list.map(async (f) => ({ f, dataUrl: await readFileAsDataUrl(f) })));
     const imgs: string[] = [];
     const docs: AttachedFile[] = [];
-    for (const f of list) {
-      const dataUrl = await readFileAsDataUrl(f);
+    for (const { f, dataUrl } of read) {
+      if (dataUrl === null) continue;   // unreadable or over the size cap
       if (f.type.startsWith('image/')) imgs.push(dataUrl);
       else docs.push({ name: f.name, dataUrl });
     }
     if (imgs.length) setImages((prev) => [...prev, ...imgs]);
     if (docs.length) setFiles((prev) => [...prev, ...docs]);
+    // Say so when something was skipped. Silently dropping an oversize PDF left the
+    // composer looking unchanged, and the message went out with no attachment at all.
+    const skipped = read.filter((r) => r.dataUrl === null).map((r) => r.f.name || 'file');
+    setAttachError(skipped.length === 0 ? null
+      : `Couldn't attach ${skipped.slice(0, 3).join(', ')}${skipped.length > 3 ? ` +${skipped.length - 3} more` : ''} — empty, unreadable, or over ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB.`);
+    return imgs.length + docs.length;
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
-    const items = Array.from(e.clipboardData.items);
-    const imageItems = items.filter((item) => item.type.startsWith('image/'));
-    if (imageItems.length > 0) {
-      e.preventDefault();
-      const newImages: string[] = [];
-      for (const item of imageItems) {
-        const file = item.getAsFile();
-        if (file) newImages.push(await readFileAsDataUrl(file));
-      }
-      setImages((prev) => [...prev, ...newImages]);
-      return;
-    }
-    e.preventDefault();
+    // Same path as drop and the file picker: pasting a PDF/CSV used to be silently
+    // discarded while dropping the identical file worked.
+    const files = Array.from(e.clipboardData.items)
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((f): f is File => f !== null);
+    // Read the text BEFORE awaiting: the clipboard event's data is not available
+    // after the handler returns.
     const text = e.clipboardData.getData('text/plain');
+    e.preventDefault();
+    if (files.length > 0 && await addAttachments(files) > 0) return;
+    // Nothing attached (oversize/unreadable) — don't let the paste become a no-op.
     if (text) document.execCommand('insertText', false, text);
   };
 
@@ -363,6 +397,12 @@ export function ChatInput({ send }: Props) {
         />
       )}
 
+      {attachError && (
+        <div className="chat-input__attach-error" role="alert">
+          <span>{attachError}</span>
+          <button className="chat-input__attach-error-x" aria-label="Dismiss" onClick={() => setAttachError(null)}>×</button>
+        </div>
+      )}
       {files.length > 0 && (
         <div className="chat-input__files">
           {files.map((f, i) => (

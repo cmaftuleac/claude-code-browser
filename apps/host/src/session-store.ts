@@ -60,10 +60,18 @@ export class SessionStore {
         if (entry.type === 'user') {
           textContent = stripPromptPrefix(textContent);
         }
+        // Carry the transcript's own ISO timestamp through as epoch ms. Without it the
+        // panel stamps every history message with `Date.now()` at load, which makes
+        // "is this message newer than the disk snapshot?" unanswerable — and that is
+        // exactly the question it asks to decide whether a turn that finished during a
+        // resume round-trip should be kept rather than overwritten by older history.
+        const iso = (entry as { timestamp?: unknown }).timestamp;
+        const ts = typeof iso === 'string' ? Date.parse(iso) : NaN;
         messages.push({
           role: entry.type === 'user' ? 'user' : 'assistant',
           content: textContent || blocks[0]?.content || '',
           blocks: entry.type === 'assistant' ? blocks : undefined,
+          ...(Number.isFinite(ts) ? { timestamp: ts } : {}),
         });
       }
       return messages;
