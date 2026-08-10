@@ -46,7 +46,7 @@ The npm package is *not* a standalone Claude Code — it requires the user's Cla
 
 ### Chrome Web Store credentials
 
-CI authenticates with `CWS_CLIENT_ID` / `CWS_CLIENT_SECRET` / `CWS_REFRESH_TOKEN`, stored as GitHub Actions secrets. They come from a Google Cloud project owned by the same account that owns the store listing. **This repo is public — the project number, the account, and the secret values all live in the gitignored `CLAUDE.local.md`, never here.** `scripts/cws-auth.mjs` re-mints the refresh token and writes all three straight into GitHub.
+CI authenticates with `CWS_CLIENT_ID` / `CWS_CLIENT_SECRET` / `CWS_REFRESH_TOKEN`, stored as GitHub Actions secrets. They come from a Google Cloud project owned by the same account that owns the store listing; the downloaded OAuth client JSON is committed at the repo root. **The refresh token is the one that actually grants publish rights, and it is never written to disk** — `scripts/cws-auth.mjs` pipes it straight into `gh secret set`. The client id/secret alone cannot publish anything without it. Account and project number are in the gitignored `CLAUDE.local.md`. `scripts/cws-auth.mjs` re-mints the refresh token and writes all three straight into GitHub.
 
 Four things this setup gets wrong on the first try, in the order they bite:
 
