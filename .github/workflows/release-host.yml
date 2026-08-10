@@ -107,6 +107,26 @@ jobs:
           echo "--- tarball contents ---"
           tar -tzf /tmp/claude-code-browser-${{ steps.v.outputs.version }}.tgz | head -40
 
+      - name: Preflight — OIDC credential is available
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        # npm decides silently whether to use trusted publishing: it asks the registry
+        # whether this package has a publisher record and, finding none, falls back to
+        # token auth and dies with `ENEEDAUTH ... use npm login`. That message sends you
+        # looking for a missing token when the real problem is registry-side config.
+        # Assert the half we control so the two causes can be told apart.
+        run: |
+          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+            echo "::error::No OIDC token endpoint in the environment — the job is missing 'permissions: id-token: write'."
+            exit 1
+          fi
+          echo "OIDC token endpoint present; npm can request a credential."
+          echo "If publish still fails with ENEEDAUTH, the trusted publisher record on npmjs.com"
+          echo "does not match. It must be exactly:"
+          echo "  repository:       cmaftuleac/claude-code-browser"
+          echo "  workflow file:    release-host.yml"
+          echo "  environment:      (blank — this job declares none)"
+          echo "Set it at https://www.npmjs.com/package/claude-code-browser/access"
+
       - name: Publish to npm
         if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
         # No NODE_AUTH_TOKEN: an empty/absent token env would shadow OIDC and fail
