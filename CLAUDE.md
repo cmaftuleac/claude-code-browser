@@ -39,8 +39,21 @@ The npm package is *not* a standalone Claude Code — it requires the user's Cla
 ## Releases
 
 - npm publishes are manual: `npm publish -w apps/host --access public` after bumping `apps/host/package.json:version`. The package is public and immutable per published version — bump and re-publish, never try to re-use a version number.
-- Chrome Web Store uploads are done through the developer dashboard at https://chrome.google.com/webstore/devconsole — paste new ZIP, update store listing, submit for review.
+- Chrome Web Store uploads run in CI (`.github/workflows/release-extension.yml`): tag `ext-v<manifest version>` to upload and submit for review, or run the workflow manually to upload a draft. The dashboard at https://chrome.google.com/webstore/devconsole still works as a fallback — paste the ZIP, submit for review.
 - After every release, tag in git: `git tag v<version> && git push origin v<version>`.
+
+**Release order matters.** The extension refuses to talk to a host older than `MIN_HOST_VERSION` and self-updates it from npm, so the host must be on npm *before* the extension ships: tag `v<host>` → bump `MIN_HOST_VERSION` → tag `ext-v<ext>`.
+
+### Chrome Web Store credentials
+
+CI authenticates with `CWS_CLIENT_ID` / `CWS_CLIENT_SECRET` / `CWS_REFRESH_TOKEN`, stored as GitHub Actions secrets. They come from a Google Cloud project owned by the same account that owns the store listing. **This repo is public — the project number, the account, and the secret values all live in the gitignored `CLAUDE.local.md`, never here.** `scripts/cws-auth.mjs` re-mints the refresh token and writes all three straight into GitHub.
+
+Four things this setup gets wrong on the first try, in the order they bite:
+
+1. **The OAuth client must be type "Desktop app"**, not "Chrome Extension". The Chrome Extension type issues no client secret at all (an extension can't hold one), and Desktop app is what implicitly permits the `http://127.0.0.1:8818` loopback the script listens on.
+2. **Enable the Chrome Web Store API** in the project. Consent and token exchange both succeed without it; the upload is what fails, with a 403 `SERVICE_DISABLED`.
+3. **Publish the OAuth consent screen** (Google Auth Platform → Audience). Refresh tokens issued while the project is in *Testing* expire after **7 days**, and publishing later does not rescue an already-issued one — CI works for a week, then dies with `invalid_grant`. The "Google hasn't verified this app" warning during consent is expected and harmless; Branding needs nothing filled in, and uploading a logo there would force a verification review.
+4. **The approving account needs publish rights on the listing**, not just ownership of the Cloud project — otherwise everything authorises cleanly and the upload 404s.
 
 ## Things that have bitten this project before
 

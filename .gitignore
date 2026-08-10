@@ -3,8 +3,12 @@ dist/
 .turbo/
 *.tsbuildinfo
 .env
+# Release credentials — this repo is PUBLIC, secrets never get committed here.
+CLAUDE.local.md
 .DS_Store
 .playwright-mcp/
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
 dist-web/
+# Google OAuth client JSON from the Cloud console "Download JSON" button.
+*client_secret*.json
