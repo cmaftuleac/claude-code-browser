@@ -38,11 +38,25 @@ The npm package is *not* a standalone Claude Code — it requires the user's Cla
 
 ## Releases
 
-- npm publishes are manual: `npm publish -w apps/host --access public` after bumping `apps/host/package.json:version`. The package is public and immutable per published version — bump and re-publish, never try to re-use a version number.
+- npm publishes run in CI (`.github/workflows/release-host.yml`): bump `apps/host/package.json:version`, then tag `v<version>`. The package is public and immutable per published version — bump and re-publish, never try to re-use a version number. `npm publish -w apps/host --access public` still works as a manual fallback.
 - Chrome Web Store uploads run in CI (`.github/workflows/release-extension.yml`): tag `ext-v<manifest version>` to upload and submit for review, or run the workflow manually to upload a draft. The dashboard at https://chrome.google.com/webstore/devconsole still works as a fallback — paste the ZIP, submit for review.
 - After every release, tag in git: `git tag v<version> && git push origin v<version>`.
 
 **Release order matters.** The extension refuses to talk to a host older than `MIN_HOST_VERSION` and self-updates it from npm, so the host must be on npm *before* the extension ships: tag `v<host>` → bump `MIN_HOST_VERSION` → tag `ext-v<ext>`.
+
+### npm trusted publishing (OIDC)
+
+The host workflow authenticates with no token at all: GitHub mints an OIDC token (`permissions: id-token: write`) and npm exchanges it for a short-lived publish grant, which also produces provenance. This requires **npm ≥ 11.5.1** — Node 22 bundles npm 10, so the workflow upgrades it explicitly.
+
+It only works if `claude-code-browser` lists this repo as a trusted publisher at https://www.npmjs.com/package/claude-code-browser/access, matching exactly:
+
+| Field | Value |
+|---|---|
+| Repository | `cmaftuleac/claude-code-browser` |
+| Workflow filename | `release-host.yml` |
+| Environment | *(blank — the job declares none)* |
+
+**When that record is missing or mismatched, the failure is deeply misleading.** npm asks the registry whether the package has a publisher record; finding none, it silently skips OIDC, falls back to token auth, and dies with `ENEEDAUTH — You need to authorize this machine using npm login`. There is no mention of OIDC anywhere in the log. Nothing is wrong with the token (there is no token); the record is. The preflight step in the workflow exists to tell these two cases apart.
 
 ### Chrome Web Store credentials
 
