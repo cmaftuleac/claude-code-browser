@@ -10,5 +10,3 @@ CLAUDE.local.md
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
 dist-web/
-# Google OAuth client JSON from the Cloud console "Download JSON" button.
-*client_secret*.json
