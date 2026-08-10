@@ -46,7 +46,18 @@ The npm package is *not* a standalone Claude Code — it requires the user's Cla
 
 ### Chrome Web Store credentials
 
-CI authenticates with `CWS_CLIENT_ID` / `CWS_CLIENT_SECRET` / `CWS_REFRESH_TOKEN`, stored as GitHub Actions secrets. They come from a Google Cloud project owned by the same account that owns the store listing; the downloaded OAuth client JSON is committed at the repo root. **The refresh token is the one that actually grants publish rights, and it is never written to disk** — `scripts/cws-auth.mjs` pipes it straight into `gh secret set`. The client id/secret alone cannot publish anything without it. Account and project number are in the gitignored `CLAUDE.local.md`. `scripts/cws-auth.mjs` re-mints the refresh token and writes all three straight into GitHub.
+CI authenticates with `CWS_CLIENT_ID` / `CWS_CLIENT_SECRET` / `CWS_REFRESH_TOKEN`, stored as GitHub Actions secrets. `scripts/cws-auth.mjs` re-mints all three and writes them straight into GitHub.
+
+| Thing | Value |
+|---|---|
+| Google account | `corneliu.maftuleac@gmail.com` |
+| Google Cloud project | `medical-ai`, project number `240994675178` |
+| OAuth client type | Desktop app (created 2026-08-10) |
+| `CWS_CLIENT_ID` | `240994675178-1j7b09fq8u49pem58highga9uag6l7fp.apps.googleusercontent.com` |
+| `CWS_CLIENT_SECRET` | gitignored `CLAUDE.local.md` — GitHub push protection rejects it in a tracked file |
+| `CWS_REFRESH_TOKEN` | GitHub Actions secrets only; never written to disk |
+
+The client lives in the `medical-ai` project because that was the console's selected project at creation time — harmless, just unrelated to the name. **The refresh token is the credential that actually grants publish rights**; the client id/secret cannot publish anything without it, which is why only the token is treated as sensitive here.
 
 Four things this setup gets wrong on the first try, in the order they bite:
 
