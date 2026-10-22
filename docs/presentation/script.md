@@ -10,7 +10,7 @@ Target pace ~130 wpm. Don't rush the demo; cut the architecture details before y
 
 **[S0 — title]**
 
-Hi everyone. I'm Corneliu. (beat) I want to start with a complaint.
+Hi everyone. (beat) I want to start with a complaint.
 
 **[S1 — "the button is the wrong color"]**
 
@@ -136,7 +136,7 @@ And it's real — and it's not just me using it. _[show analytics]_ Right now it
 
 So — the next time you catch yourself screenshotting your own app to explain it to an AI: (beat) don't describe your UI. **Point at it.**
 
-Try it tonight, it's one command. I'm @cmaftuleac. (beat) Happy to take questions.
+Try it tonight, it's one command. (beat) Happy to take questions.
 
 ---
 

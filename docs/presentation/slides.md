@@ -8,7 +8,7 @@
 **Claude Code Browser**
 Point at it. Ask. Fixed.
 
-- Your name / handle (@cmaftuleac · Fineguide.AI)
+- Fineguide.AI (fineguide.ai)
 - "A weekend project that ended up on the Chrome Web Store"
 
 _Visual: `images/03-webstore-listing.png` — the live listing (5.0★, 946 users) makes "shipped" the first thing they see._
@@ -164,7 +164,7 @@ _Visual: `images/02-analytics-users.png` (the growth curve) — real numbers bea
 
 - Try it tonight: `npx claude-code-browser install`
 - github.com/cmaftuleac/claude-code-browser
-- @cmaftuleac · Fineguide.AI
+- Fineguide.AI · fineguide.ai
 - "Questions?"
 
 _Visual: the title-slide image again + QR code. Bookend._
