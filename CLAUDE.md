@@ -24,7 +24,7 @@ These are stable, canonical values. Do not invent or guess these — always use 
 | Native messaging host name | `com.claude_code_browser` |
 | npm package | `claude-code-browser` ([npmjs.com](https://www.npmjs.com/package/claude-code-browser)) |
 | GitHub repo | https://github.com/cmaftuleac/claude-code-browser |
-| Publisher / copyright | Fineguide.AI (Corneliu Maftuleac) |
+| Publisher / copyright | Fineguide.AI (Liviu Maftuleac) — the sole founder, owner and holder of Fineguide.AI. Corneliu Maftuleac is an advisor only: never name him as author, owner or copyright holder |
 
 When loaded as an unpacked extension for development, `chrome.runtime.id` is a generated value (NOT the store ID). For anything that needs to point to the live listing (review URLs, install instructions, etc.), use the hardcoded store ID above — not `chrome.runtime.id` — so it works in both dev and production.
 

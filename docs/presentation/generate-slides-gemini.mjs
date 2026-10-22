@@ -53,7 +53,7 @@ const SLIDES = [
     prompt: `Title slide. Large headline: "Claude Code Browser". Below it a plain descriptive subtitle (Romanian, not a slogan): "Extensie Chrome care leagă pagina din browser de Claude Code". Big coral starburst logo near the headline on the left. On the right, show the provided side-panel screenshot as the hero product shot, in a plain floating card with rounded corners and a soft shadow. ${SCREENSHOT_RULE}`,
   },
   {
-    // 1 — Intro: Corneliu + Fineguide.AI  (logo + QR composited later, keep right side clear)
+    // 1 — Intro: Fineguide.AI  (logo + QR composited later, keep right side clear)
     file: "slide-01-intro.png",
     inputs: [],
     prompt: `Speaker intro slide. Put ALL text on the LEFT half; keep the entire RIGHT half empty dark space (a logo and a QR code will be added there later). Left side, top to bottom: small label "PREZINTĂ", then large headline "Fineguide.AI", then a short descriptive line in a pill (Romanian, factual, not a slogan): "Platformă de business automatizare cu AI". A coral starburst accent near the headline. Do not draw any logo or QR code yourself.`,

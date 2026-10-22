@@ -7,7 +7,7 @@ Materiale pentru o prezentare de **10–15 minute**, susținută **în limba rom
 | # | Slide | Despre |
 |---|---|---|
 | 0 | Titlu + captură | O frază + produsul în acțiune (panoul lateral cu deploy). |
-| 1 | Cine sunt | Corneliu Maftuleac · Fineguide.AI — logo + QR către fineguide.ai. |
+| 1 | Cine sunt | Fineguide.AI — logo + QR către fineguide.ai. |
 | 2 | Problema | E greu să-i spui unui AI *care* pixel. |
 | 3 | Soluția 1/3 | Ideea: dă click, elementul devine referință. |
 | 4 | Soluția 2/3 | Fluxul: arată → context → repară → reîncarcă. |

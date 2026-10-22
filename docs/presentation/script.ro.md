@@ -30,7 +30,7 @@ Bună tuturor. Astăzi vă arăt **Claude Code Browser** — o extensie de Chrom
 
 ## 1 · Cine sunt — 1:00
 
-**[S1 — intro Corneliu + Fineguide]**
+**[S1 — intro Fineguide]**
 
 Pe scurt despre mine: vin de la **Fineguide.AI**, unde construim o platformă care transformă mesajele clienților în vânzări, cu AI — răspunsuri automate, calificare de lead-uri, integrare în CRM.
 
@@ -114,7 +114,7 @@ Scriu ca un om: „fă butonul ăsta albastru și puțin mai mare." Trimit. (pau
 
 Atât. Dacă lucrezi cu Claude Code și cu interfețe în browser, cred că o să-ți economisească timp real. (pauză)
 
-Scanează codul din dreapta sau scrie `npx claude-code-browser install`. Sunt @cmaftuleac. (pauză) Mulțumesc — răspund cu drag la întrebări.
+Scanează codul din dreapta sau scrie `npx claude-code-browser install`. (pauză) Mulțumesc — răspund cu drag la întrebări.
 
 ---
 
